@@ -1,7 +1,15 @@
 import { CSS_CLASSES, GAME_CONFIG } from "../constants";
 import type { CheckerSnapshot } from "../types";
 
-export function Piece({ checker }: { checker: CheckerSnapshot }) {
+export function Piece({
+  checker,
+  selected = false,
+  capturable = false,
+}: {
+  checker: CheckerSnapshot;
+  selected?: boolean;
+  capturable?: boolean;
+}) {
   const colorClass =
     checker.color === GAME_CONFIG.WHITE_PLAYER ? CSS_CLASSES.WHITE_PIECE : CSS_CLASSES.BLACK_PIECE;
 
@@ -11,6 +19,8 @@ export function Piece({ checker }: { checker: CheckerSnapshot }) {
         CSS_CLASSES.PIECE,
         colorClass,
         checker.isKing ? CSS_CLASSES.KING : null,
+        selected ? CSS_CLASSES.SELECTED : null,
+        capturable ? CSS_CLASSES.CAPTURABLE : null,
       ]
         .filter(Boolean)
         .join(" ")}
@@ -21,4 +31,3 @@ export function Piece({ checker }: { checker: CheckerSnapshot }) {
     />
   );
 }
-
