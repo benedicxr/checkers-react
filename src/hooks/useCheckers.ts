@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { CLOCK_CONFIG, GAME_CONFIG } from "../constants";
-import type { BoardSnapshot, Coords, Move, Player, SerializableClockSnapshot } from "../types";
-import { CheckerModel } from "../models/CheckerModel";
-import { GameClock } from "../models/GameClock";
-import { MoveHistoryModel } from "../models/MoveHistoryModel";
+import { useCallback } from "react";
+import { GAME_CONFIG, CLOCK_CONFIG } from "../constants";
+import type { Board, BoardSnapshot, Coords, Move, Player, SerializableClockSnapshot } from "../types";
+import { getCapturingPieces, getValidMovesForPiece, getWinnerByBoard, playerHasCapture } from "../logic/gameRules";
+import { getWinnerByTime, getSerializableSnapshot } from "../logic/clock";
+import { getActiveEntry, getRenderList } from "../logic/moveHistory";
+import { useGameReducer } from "./useGameReducer";
+import { useTimer } from "./useTimer";
 
 type ClockSnapshot = Readonly<
   SerializableClockSnapshot & {
@@ -30,322 +32,117 @@ type CheckersSnapshot = Readonly<{
   activeMovePath: readonly Coords[] | null;
 }>;
 
-type ControllerState = {
-  selected: Coords | null;
-  captureChainPiece: Coords | null;
-  inTurnMove: boolean;
-  initialWhite: number;
-  initialBlack: number;
-};
-
-function sameCoords(a: Coords | null, b: Coords | null): boolean {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return a.r === b.r && a.c === b.c;
+function coreMovesToUi(moves: ReturnType<typeof getValidMovesForPiece>): Move[] {
+  return moves.map((m) => {
+    if (m.type === "simple") return { r: m.to.r, c: m.to.c, type: "move" as const };
+    return { r: m.to.r, c: m.to.c, type: "jump" as const, target: { ...m.captured } };
+  });
 }
 
-function isMoveAt(m: Move, r: number, c: number): boolean {
-  return m.r === r && m.c === c;
-}
-
-function computeSnapshotFrom(
-  model: CheckerModel,
-  history: MoveHistoryModel,
-  ctrl: ControllerState,
-  clock: GameClock,
-): CheckersSnapshot {
-  const modelWinner = model.getWinner();
-  const clockWinner = clock.getWinnerByTime();
-  const winner = modelWinner ?? clockWinner;
-
-  let mustCapture = false;
-  if (winner !== null) {
-    mustCapture = false;
-  } else if (ctrl.captureChainPiece !== null) {
-    mustCapture = true;
-  } else {
-    mustCapture = model.playerHasCapture(model.turn);
-  }
-
-  const selected =
-    ctrl.captureChainPiece !== null ? ctrl.captureChainPiece : ctrl.selected;
-
-  let availableMoves: Move[] = [];
-  if (winner !== null || !selected) {
-    availableMoves = [];
-  } else if (ctrl.captureChainPiece !== null) {
-    availableMoves = model.getValidMoves(selected.r, selected.c, { mustCapture: true });
-  } else {
-    availableMoves = model.getValidMoves(selected.r, selected.c, { mustCapture });
-  }
-
-  let capturingPieces: Coords[] = [];
-  if (winner !== null || ctrl.captureChainPiece !== null) {
-    capturingPieces = [];
-  } else if (mustCapture) {
-    capturingPieces = model.getCapturingPieces(model.turn);
-  } else {
-    capturingPieces = [];
-  }
-
-  const capturableTargets = availableMoves
-    .filter((m): m is Extract<Move, { type: "jump" }> => m.type === "jump")
-    .map((m) => ({ ...m.target }));
-
-  const currentWhite = model.countPieces(GAME_CONFIG.WHITE_PLAYER);
-  const currentBlack = model.countPieces(GAME_CONFIG.BLACK_PLAYER);
-
-  const capturedByWhite = Math.max(0, ctrl.initialBlack - currentBlack);
-  const capturedByBlack = Math.max(0, ctrl.initialWhite - currentWhite);
-
-  const activeMoveId = history.activeId;
-  const activeEntry = activeMoveId ? history.getEntry(activeMoveId) : undefined;
-  const clockSnap = clock.getSnapshot();
-
-  return {
-    board: model.board,
-    turn: model.turn,
-    winner,
-    mustCapture,
-    captureChainPiece: ctrl.captureChainPiece,
-    selected,
-    availableMoves,
-    capturingPieces,
-    capturableTargets,
-    capturedByWhite,
-    capturedByBlack,
-    canUndo: model.canUndo(),
-    clock: { enabled: clock.enabled, ...clockSnap },
-    moves: history.getRenderList(),
-    activeMoveId,
-    activeMovePath: activeEntry ? activeEntry.path : null,
-  };
+function toBoardSnapshot(board: Board): BoardSnapshot {
+  return board as unknown as BoardSnapshot;
 }
 
 export function useCheckers() {
-  const [model] = useState(() => new CheckerModel());
-  const [history] = useState(() => new MoveHistoryModel());
-  const [clock] = useState(() => new GameClock({ activePlayer: model.turn }));
-  const [ctrl] = useState<ControllerState>(() => ({
-    selected: null,
-    captureChainPiece: null,
-    inTurnMove: false,
-    initialWhite: model.countPieces(GAME_CONFIG.WHITE_PLAYER),
-    initialBlack: model.countPieces(GAME_CONFIG.BLACK_PLAYER),
-  }));
+  const { state, dispatch } = useGameReducer();
 
-  const modelRef = useRef(model);
-  const historyRef = useRef(history);
-  const clockRef = useRef(clock);
-  const controllerRef = useRef(ctrl);
+  useTimer({
+    enabled: state.clock.enabled && state.clock.running,
+    intervalMs: CLOCK_CONFIG.TICK_INTERVAL_MS,
+    onTick: (perfNowMs) => dispatch({ type: "TICK", perfNowMs }),
+  });
 
-  const [snapshot, setSnapshot] = useState<CheckersSnapshot>(() =>
-    computeSnapshotFrom(model, history, ctrl, clock),
-  );
+  const snapshot: CheckersSnapshot = (() => {
+    const boardWinner = getWinnerByBoard(state.board, state.turn);
+    const timeWinner = getWinnerByTime(state.clock);
+    const winner = boardWinner ?? timeWinner;
 
-  const refresh = useCallback(() => {
-    setSnapshot(
-      computeSnapshotFrom(
-        modelRef.current,
-        historyRef.current,
-        controllerRef.current,
-        clockRef.current,
-      ),
-    );
-  }, []);
-
-  const tickAndMaybeStop = useCallback(() => {
-    const perfNow = performance.now();
-    const c = clockRef.current;
-    c.tick(perfNow);
-    if (c.getWinnerByTime() !== null || modelRef.current.getWinner() !== null) {
-      c.stop(perfNow);
+    let mustCapture = false;
+    if (winner !== null) {
+      mustCapture = false;
+    } else if (state.captureChainPiece !== null) {
+      mustCapture = true;
+    } else {
+      mustCapture = playerHasCapture(state.board, state.turn);
     }
-  }, []);
 
-  const getWinnerNow = useCallback((): Player | null => {
-    tickAndMaybeStop();
-    return modelRef.current.getWinner() ?? clockRef.current.getWinnerByTime();
-  }, [tickAndMaybeStop]);
+    const selected = state.captureChainPiece !== null ? state.captureChainPiece : state.selected;
 
-  useEffect(() => {
-    const perfNow = performance.now();
-    clockRef.current.reset(modelRef.current.turn, perfNow);
-
-    const id = window.setInterval(() => {
-      tickAndMaybeStop();
-      setSnapshot(
-        computeSnapshotFrom(
-          modelRef.current,
-          historyRef.current,
-          controllerRef.current,
-          clockRef.current,
-        ),
+    let availableMoves: Move[] = [];
+    if (winner !== null || !selected) {
+      availableMoves = [];
+    } else if (state.captureChainPiece !== null) {
+      availableMoves = coreMovesToUi(getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly: true }));
+    } else {
+      availableMoves = coreMovesToUi(
+        getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly: mustCapture }),
       );
-    }, CLOCK_CONFIG.TICK_INTERVAL_MS);
+    }
 
-    return () => window.clearInterval(id);
-  }, [tickAndMaybeStop]);
+    let capturingPieces: Coords[] = [];
+    if (winner !== null || state.captureChainPiece !== null) {
+      capturingPieces = [];
+    } else if (mustCapture) {
+      capturingPieces = getCapturingPieces(state.board, state.turn);
+    } else {
+      capturingPieces = [];
+    }
 
-  const clearSelection = useCallback(() => {
-    const c = controllerRef.current;
-    if (c.captureChainPiece) return;
-    c.selected = null;
-    refresh();
-  }, [refresh]);
+    const capturableTargets = availableMoves
+      .filter((m): m is Extract<Move, { type: "jump" }> => m.type === "jump")
+      .map((m) => ({ ...m.target }));
 
-  const selectCell = useCallback(
-    (r: number, c: number) => {
-      const m = modelRef.current;
-      const cst = controllerRef.current;
-      const h = historyRef.current;
+    const currentWhite = state.board.flat().filter((p) => p && p.color === GAME_CONFIG.WHITE_PLAYER).length;
+    const currentBlack = state.board.flat().filter((p) => p && p.color === GAME_CONFIG.BLACK_PLAYER).length;
 
-      if (getWinnerNow() !== null) return;
+    const capturedByWhite = Math.max(0, state.initialBlack - currentBlack);
+    const capturedByBlack = Math.max(0, state.initialWhite - currentWhite);
 
-      h.setActive(null);
+    const activeEntry = getActiveEntry(state.history);
+    const clockSnap = getSerializableSnapshot(state.clock);
 
-      if (cst.captureChainPiece && (cst.captureChainPiece.r !== r || cst.captureChainPiece.c !== c)) {
-        return;
-      }
-
-      const piece = m.getPiece(r, c);
-      if (!piece || piece.color !== m.turn) {
-        cst.selected = null;
-        refresh();
-        return;
-      }
-
-      const mustCapture =
-        cst.captureChainPiece !== null ? true : m.playerHasCapture(m.turn);
-
-      const moves = m.getValidMoves(r, c, { mustCapture });
-      if (mustCapture && moves.length === 0) return;
-
-      cst.selected = { r, c };
-      refresh();
-    },
-    [getWinnerNow, refresh],
-  );
-
-  const applyMove = useCallback(
-    (from: Coords, to: Coords, details: Move) => {
-      const m = modelRef.current;
-      const cst = controllerRef.current;
-      const h = historyRef.current;
-      const clk = clockRef.current;
-
-      if (getWinnerNow() !== null) return;
-
-      if (!cst.inTurnMove) {
-        m.pushHistory();
-        cst.inTurnMove = true;
-      }
-
-      const isCapture = details.type === "jump";
-      h.beginIfNeeded(m.turn, from, { isCapture });
-      m.applyMove(from, to, details, { switchTurn: false });
-      h.appendStep(to, { isCapture });
-
-      if (details.type === "jump") {
-        const nextCaptures = m.getValidMoves(to.r, to.c, { mustCapture: true });
-        if (nextCaptures.length > 0) {
-          cst.captureChainPiece = { ...to };
-          cst.selected = { ...to };
-          refresh();
-          return;
-        }
-      }
-
-      m.endTurn();
-      clk.setActivePlayer(m.turn);
-      h.finalizePending();
-      cst.captureChainPiece = null;
-      cst.selected = null;
-      cst.inTurnMove = false;
-      tickAndMaybeStop();
-      refresh();
-    },
-    [getWinnerNow, refresh, tickAndMaybeStop],
-  );
+    return {
+      board: toBoardSnapshot(state.board),
+      turn: state.turn,
+      winner,
+      mustCapture,
+      captureChainPiece: state.captureChainPiece,
+      selected,
+      availableMoves,
+      capturingPieces,
+      capturableTargets,
+      capturedByWhite,
+      capturedByBlack,
+      canUndo: state.undo.length > 0,
+      clock: { enabled: state.clock.enabled, ...clockSnap },
+      moves: getRenderList(state.history),
+      activeMoveId: state.history.activeId,
+      activeMovePath: activeEntry ? activeEntry.path : null,
+    };
+  })();
 
   const onCellClick = useCallback(
     (r: number, c: number) => {
-      const model = modelRef.current;
-      const cst = controllerRef.current;
-
-      if (getWinnerNow() !== null) return;
-
-      const selected = cst.captureChainPiece ?? cst.selected;
-      if (selected) {
-        const moves =
-          cst.captureChainPiece !== null
-            ? model.getValidMoves(selected.r, selected.c, { mustCapture: true })
-            : model.getValidMoves(selected.r, selected.c, {
-                mustCapture: model.playerHasCapture(model.turn),
-              });
-
-        const move = moves.find((mm) => isMoveAt(mm, r, c));
-        if (move) {
-          applyMove(selected, { r, c }, move);
-          return;
-        }
-
-        if (sameCoords(selected, { r, c })) {
-          clearSelection();
-          return;
-        }
-      }
-
-      selectCell(r, c);
+      dispatch({ type: "CELL_CLICK", at: { r, c }, perfNowMs: performance.now() });
     },
-    [applyMove, clearSelection, getWinnerNow, selectCell],
+    [dispatch],
   );
 
   const reset = useCallback(() => {
-    const m = modelRef.current;
-    const h = historyRef.current;
-    const cst = controllerRef.current;
-    const clk = clockRef.current;
-
-    m.reset();
-    h.reset();
-    cst.selected = null;
-    cst.captureChainPiece = null;
-    cst.inTurnMove = false;
-    cst.initialWhite = m.countPieces(GAME_CONFIG.WHITE_PLAYER);
-    cst.initialBlack = m.countPieces(GAME_CONFIG.BLACK_PLAYER);
-    clk.reset(m.turn);
-    refresh();
-  }, [refresh]);
+    dispatch({ type: "RESET", perfNowMs: performance.now() });
+  }, [dispatch]);
 
   const undo = useCallback((): boolean => {
-    const m = modelRef.current;
-    const h = historyRef.current;
-    const cst = controllerRef.current;
-    const clk = clockRef.current;
-
-    const ok = m.undo();
-    if (!ok) return false;
-
-    const hadPending = h.cancelPending();
-    if (!hadPending) h.popLastEntry();
-    h.setActive(null);
-    cst.selected = null;
-    cst.captureChainPiece = null;
-    cst.inTurnMove = false;
-    clk.setActivePlayer(m.turn);
-    refresh();
+    if (state.undo.length === 0) return false;
+    dispatch({ type: "UNDO", perfNowMs: performance.now() });
     return true;
-  }, [refresh]);
+  }, [dispatch, state.undo.length]);
 
   const setActiveMove = useCallback(
     (id: number | null) => {
-      const h = historyRef.current;
-      if (id !== null && !h.getEntry(id)) return;
-      h.setActive(id);
-      refresh();
+      dispatch({ type: "SET_ACTIVE_MOVE", id });
     },
-    [refresh],
+    [dispatch],
   );
 
   return {
