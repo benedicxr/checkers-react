@@ -19,10 +19,6 @@ export function createMoveHistoryState(): MoveHistoryState {
   return { entries: [], nextId: 1, pending: null, activeId: null };
 }
 
-export function resetMoveHistory(): MoveHistoryState {
-  return createMoveHistoryState();
-}
-
 export function setActiveMove(history: MoveHistoryState, id: number | null): MoveHistoryState {
   if (id !== null && !history.entries.some((e) => e.id === id)) return history;
   return { ...history, activeId: id };

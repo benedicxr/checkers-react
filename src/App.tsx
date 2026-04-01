@@ -2,6 +2,7 @@ import { useCheckers } from "./hooks/useCheckers";
 import { Board } from "./components/Board";
 import { GameInfo } from "./components/GameInfo";
 import { MoveHistory } from "./components/MoveHistory";
+import { TimerView } from "./components/TimerView";
 
 function App() {
   const { snapshot, onCellClick, reset, undo, setActiveMove } = useCheckers();
@@ -11,13 +12,15 @@ function App() {
       <header className="topbar">
         <div className="brand">
           <div className="title">Checkers</div>
-          <GameInfo
-            turn={snapshot.turn}
-            capturedByWhite={snapshot.capturedByWhite}
-            capturedByBlack={snapshot.capturedByBlack}
-            winner={snapshot.winner}
-            clock={snapshot.clock}
-          />
+          <div id="turn-indicator">
+            <GameInfo
+              turn={snapshot.turn}
+              capturedByWhite={snapshot.capturedByWhite}
+              capturedByBlack={snapshot.capturedByBlack}
+              winner={snapshot.winner}
+            />
+            <TimerView clock={snapshot.clock} />
+          </div>
         </div>
 
         <div className="actions">

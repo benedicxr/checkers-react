@@ -6,8 +6,6 @@ export interface Coords {
   c: number;
 }
 
-export type Position = Coords;
-
 export interface QuietMove {
   r: number;
   c: number;
@@ -52,11 +50,6 @@ export interface SerializableModelState {
   history: SerializableHistoryEntry[];
 }
 
-export interface CaptureChainState {
-  active: boolean;
-  piece?: Coords;
-}
-
 export interface SerializableClockSnapshot {
   whiteMs: number;
   blackMs: number;
@@ -68,11 +61,9 @@ export interface SerializableClockState extends SerializableClockSnapshot {
   enabled: boolean;
   initialMs: number;
   lastUpdateUnixMs: number;
-  history?: SerializableClockSnapshot[];
 }
 
 export interface SerializableControllerState {
-  captureChain?: CaptureChainState;
   clock?: SerializableClockState;
 }
 

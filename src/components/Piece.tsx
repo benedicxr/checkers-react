@@ -1,7 +1,8 @@
 import { CSS_CLASSES, GAME_CONFIG } from "../constants";
 import type { CheckerSnapshot } from "../types";
+import { memo } from "react";
 
-export function Piece({
+export const Piece = memo(function Piece({
   checker,
   selected = false,
   capturable = false,
@@ -30,4 +31,4 @@ export function Piece({
       }`}
     />
   );
-}
+});

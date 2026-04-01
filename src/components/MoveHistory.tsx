@@ -1,4 +1,6 @@
-export function MoveHistory({
+import { memo } from "react";
+
+export const MoveHistory = memo(function MoveHistory({
   moves,
   activeId,
   onSelect,
@@ -31,4 +33,4 @@ export function MoveHistory({
       )}
     </aside>
   );
-}
+});

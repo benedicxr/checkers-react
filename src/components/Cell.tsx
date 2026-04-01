@@ -1,8 +1,9 @@
 import { CSS_CLASSES, GAME_RULES } from "../constants";
 import type { CheckerSnapshot, Move } from "../types";
+import { memo, useCallback } from "react";
 import { Piece } from "./Piece";
 
-export function Cell({
+export const Cell = memo(function Cell({
   row,
   col,
   checker,
@@ -28,6 +29,8 @@ export function Cell({
   const isDark =
     (row + col) % GAME_RULES.DARK_CELL_MOD === GAME_RULES.DARK_CELL_REMAINDER;
 
+  const handleClick = useCallback(() => onClick(row, col), [col, onClick, row]);
+
   const isAvailable = Boolean(availableMove);
   const isCapture = availableMove?.type === "jump";
   const cellClasses = [
@@ -48,11 +51,11 @@ export function Cell({
       data-row={row}
       data-col={col}
       role="gridcell"
-      onClick={() => onClick(row, col)}
+      onClick={handleClick}
     >
       {checker ? (
         <Piece checker={checker} selected={selected} capturable={capturingPiece} />
       ) : null}
     </div>
   );
-}
+});

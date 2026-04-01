@@ -1,22 +1,26 @@
-import {useEffect, useRef} from 'react';
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 export function useTimer({
-    enabled,
-    intervalMs,
-    onTick,
+  enabled,
+  intervalMs,
+  onTick,
 }: {
-    enabled: boolean;
-    intervalMs: number;
-    onTick: (perfNowMs: number) => void;
+  enabled: boolean;
+  intervalMs: number;
+  onTick: (perfNowMs: number) => void;
 }): void {
-    const onTickRef = useRef(onTick);
+  const onTickRef = useRef(onTick);
 
-    useEffect(() => {
+  useLayoutEffect(() => {
+    onTickRef.current = onTick;
+  }, [onTick]);
+
+  useEffect(() => {
     if (!enabled) return;
 
     const id = window.setInterval(() => {
-    onTickRef.current(performance.now());
+      onTickRef.current(performance.now());
     }, intervalMs);
     return () => window.clearInterval(id);
-    }, [enabled, intervalMs]);
+  }, [enabled, intervalMs]);
 }

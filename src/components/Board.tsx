@@ -1,6 +1,6 @@
 import { CSS_CLASSES, GAME_CONFIG } from "../constants";
 import type { BoardSnapshot, Coords, Move } from "../types";
-import { useLayoutEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { Cell } from "./Cell";
 
 function cellKey(r: number, c: number): string {
@@ -29,7 +29,7 @@ function boardSignature(board: BoardSnapshot): string {
   return out;
 }
 
-export function Board({
+export const Board = memo(function Board({
   board,
   selected,
   availableMoves,
@@ -71,6 +71,12 @@ export function Board({
     const overlayEl = overlayRef.current;
     if (!boardEl || !overlayEl) return;
 
+    const timeoutIds: number[] = [];
+    const rafIds: number[] = [];
+    const spawnEls: HTMLElement[] = [];
+    const movedEls: HTMLElement[] = [];
+    const ghostEls: HTMLElement[] = [];
+
     const prev = prevLayoutRef.current;
     const boardRect = boardEl.getBoundingClientRect();
 
@@ -97,16 +103,18 @@ export function Board({
       ghost.style.width = `${prevLayout.rect.width}px`;
       ghost.style.height = `${prevLayout.rect.height}px`;
       overlayEl.appendChild(ghost);
+      ghostEls.push(ghost);
 
-      requestAnimationFrame(() => ghost.classList.add("ghost-out"));
-      window.setTimeout(() => ghost.remove(), 800);
+      rafIds.push(requestAnimationFrame(() => ghost.classList.add("ghost-out")));
+      timeoutIds.push(window.setTimeout(() => ghost.remove(), 800));
     }
 
     for (const [id, el] of nextEls) {
       const prevLayout = prev.get(id);
       if (!prevLayout) {
         el.classList.add("spawn");
-        requestAnimationFrame(() => el.classList.remove("spawn"));
+        spawnEls.push(el);
+        rafIds.push(requestAnimationFrame(() => el.classList.remove("spawn")));
         continue;
       }
 
@@ -117,14 +125,27 @@ export function Board({
 
       el.style.transition = "transform 0s";
       el.style.transform = `translate(${dx}px, ${dy}px)`;
+      movedEls.push(el);
       void el.getBoundingClientRect();
-      requestAnimationFrame(() => {
+      rafIds.push(requestAnimationFrame(() => {
         el.style.transition = "";
         el.style.transform = "";
-      });
+      }));
     }
 
     prevLayoutRef.current = next;
+
+    return () => {
+      for (const id of timeoutIds) window.clearTimeout(id);
+      for (const id of rafIds) cancelAnimationFrame(id);
+      for (const el of spawnEls) el.classList.remove("spawn");
+      for (const el of movedEls) {
+        el.style.transition = "";
+        el.style.transform = "";
+      }
+      for (const el of ghostEls) el.remove();
+      overlayEl.replaceChildren();
+    };
   }, [sig]);
 
   return (
@@ -149,4 +170,4 @@ export function Board({
       <div className="overlay" ref={overlayRef} aria-hidden="true" />
     </div>
   );
-}
+});

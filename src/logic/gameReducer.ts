@@ -1,18 +1,19 @@
-import type { CoreMove, Coords, PersistedGameState } from "../types";
+import type { CoreMove, Coords, PersistedGameState, Player } from "../types";
+import { GAME_CONFIG } from "../constants";
 import { cloneBoard } from "./boardUtils";
 import { applyMove } from "./applyMove";
 import { getValidMovesForPiece, getWinnerByBoard, playerHasCapture } from "./gameRules";
 import { cancelPending, popLastEntry, setActiveMove } from "./moveHistory";
 import type { GameCoreState } from "./persistence";
 import { createInitialGameState, importPersistedGameState } from "./persistence";
-import { getWinnerByTime, setActivePlayer, stopClock, tickClock } from "./clock";
+import { getWinnerByTime, setActivePlayer, stopClock } from "./clock";
 
 export type GameAction =
   | { type: "CELL_CLICK"; at: Coords; perfNowMs: number }
   | { type: "SET_ACTIVE_MOVE"; id: number | null }
   | { type: "RESET"; perfNowMs: number }
   | { type: "UNDO"; perfNowMs: number }
-  | { type: "TICK"; perfNowMs: number }
+  | { type: "TIME_OUT"; winner: Player; perfNowMs: number }
   | { type: "LOAD"; persisted: PersistedGameState; perfNowMs: number; unixNowMs: number };
 
 function sameCoords(a: Coords | null, b: Coords | null): boolean {
@@ -106,11 +107,16 @@ export function gameReducer(state: GameCoreState, action: GameAction): GameCoreS
       };
       return withWinnerStop(next, action.perfNowMs);
     }
-    case "TICK": {
-      const clock = tickClock(state.clock, action.perfNowMs);
-      if (clock === state.clock) return state;
-      const next = { ...state, clock };
-      return withWinnerStop(next, action.perfNowMs);
+    case "TIME_OUT": {
+      const boardWinner = getWinnerByBoard(state.board, state.turn);
+      const timeWinner = getWinnerByTime(state.clock);
+      if (boardWinner !== null || timeWinner !== null) return state;
+
+      const loser: Player =
+        action.winner === GAME_CONFIG.WHITE_PLAYER ? GAME_CONFIG.BLACK_PLAYER : GAME_CONFIG.WHITE_PLAYER;
+      let clock = stopClock(state.clock, action.perfNowMs);
+      clock = loser === GAME_CONFIG.WHITE_PLAYER ? { ...clock, whiteMs: 0 } : { ...clock, blackMs: 0 };
+      return { ...state, clock, persistRev: state.persistRev + 1 };
     }
     case "LOAD": {
       const next = importPersistedGameState(action.persisted, action.perfNowMs, action.unixNowMs);
