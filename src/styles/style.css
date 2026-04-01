@@ -1,5 +1,12 @@
 :root {
     --cell-size: clamp(44px, 8.2vmin, 84px);
+    --checker-size: calc(var(--cell-size) * 0.78);
+    --checker-offset: calc((var(--cell-size) - var(--checker-size)) / 2);
+
+    --transition-fast: 160ms;
+    --transition-normal: 300ms;
+    --animation-selected: 820ms;
+    --animation-crown: 1100ms;
 
     --bg-0: #e6d1b2;
     --bg-1: #c9ab83;
@@ -165,15 +172,15 @@ body {
 }
 
 .piece {
-    width: 80%;
-    height: 80%;
+    width: 100%;
+    height: 100%;
     border-radius: 50%;
     cursor: pointer;
     transition:
-        transform 320ms cubic-bezier(0.22, 1, 0.36, 1),
-        outline 180ms ease,
-        box-shadow 180ms ease,
-        filter 180ms ease;
+        transform var(--transition-fast) ease,
+        outline var(--transition-fast) ease,
+        box-shadow var(--transition-fast) ease,
+        filter var(--transition-fast) ease;
     position: relative;
     transform: translateZ(0);
     border: 1px solid rgba(53, 32, 18, 0.20);
@@ -194,7 +201,7 @@ body {
 }
 
 .piece:hover {
-    transform: translateY(-2px) scale(1.02);
+    transform: translateY(-2px) scale(1.08);
 }
 
 .white-piece {
@@ -220,8 +227,8 @@ body {
 .selected {
     outline: 4px solid var(--accent);
     outline-offset: 2px;
-    transform: scale(1.1);
-    z-index: 10;
+    transform: scale(1.06);
+    animation: selectedPulse var(--animation-selected) ease-in-out infinite;
 }
 
 .capturable {
@@ -246,6 +253,7 @@ body {
     opacity: 0.98;
 
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35));
+    animation: crownGlow var(--animation-crown) ease-in-out infinite;
 }
 
 .white-piece.king::after {
@@ -293,27 +301,63 @@ body {
     50% { transform: scale(1.12); opacity: 0.70; }
 }
 
-.overlay {
+@keyframes selectedPulse {
+    0%, 100% {
+        outline-color: rgba(242, 193, 78, 0.65);
+        filter: drop-shadow(0 0 0 rgba(242, 193, 78, 0.00));
+    }
+    50% {
+        outline-color: rgba(242, 193, 78, 0.96);
+        filter: drop-shadow(0 0 16px rgba(242, 193, 78, 0.45));
+    }
+}
+
+@keyframes crownGlow {
+    0%, 100% {
+        filter:
+            drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35))
+            drop-shadow(0 0 0 rgba(242, 193, 78, 0.00));
+        opacity: 0.96;
+    }
+    50% {
+        filter:
+            drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35))
+            drop-shadow(0 0 12px rgba(242, 193, 78, 0.36));
+        opacity: 1;
+    }
+}
+
+.pieces-layer {
     position: absolute;
     inset: 0;
     pointer-events: none;
 }
 
-.ghost {
+.piece-wrap {
     position: absolute;
-    border-radius: 50%;
-    transition: transform 360ms cubic-bezier(0.22, 1, 0.36, 1), opacity 280ms ease;
-    will-change: transform, opacity;
+    width: var(--checker-size);
+    height: var(--checker-size);
+    pointer-events: auto;
+    transition:
+        top var(--transition-normal) ease,
+        left var(--transition-normal) ease;
+    will-change: top, left;
 }
 
-.ghost-out {
-    transform: scale(0.25);
-    opacity: 0;
-}
+@media (prefers-reduced-motion: reduce) {
+    .piece-wrap {
+        transition: none;
+    }
 
-.piece.spawn {
-    transform: scale(0.72);
-    filter: saturate(1.1);
+    .piece {
+        transition: none;
+    }
+
+    .selected,
+    .piece.king::after,
+    .available-capture::after {
+        animation: none;
+    }
 }
 
 @media (max-width: 520px) {

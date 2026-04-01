@@ -1,14 +1,10 @@
 import { CSS_CLASSES, GAME_RULES } from "../constants";
-import type { CheckerSnapshot, Move } from "../types";
+import type { Move } from "../types";
 import { memo, useCallback } from "react";
-import { Piece } from "./Piece";
 
 export const Cell = memo(function Cell({
   row,
   col,
-  checker,
-  selected,
-  capturingPiece,
   availableMove,
   historyMark,
   historyStart,
@@ -17,9 +13,6 @@ export const Cell = memo(function Cell({
 }: {
   row: number;
   col: number;
-  checker: CheckerSnapshot | null;
-  selected: boolean;
-  capturingPiece: boolean;
   availableMove: Move | null;
   historyMark: boolean;
   historyStart: boolean;
@@ -46,16 +39,6 @@ export const Cell = memo(function Cell({
     .join(" ");
 
   return (
-    <div
-      className={cellClasses}
-      data-row={row}
-      data-col={col}
-      role="gridcell"
-      onClick={handleClick}
-    >
-      {checker ? (
-        <Piece checker={checker} selected={selected} capturable={capturingPiece} />
-      ) : null}
-    </div>
+    <div className={cellClasses} data-row={row} data-col={col} role="gridcell" onClick={handleClick} />
   );
 });
