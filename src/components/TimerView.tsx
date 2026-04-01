@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { CLOCK_CONFIG, GAME_CONFIG } from "../constants";
-import type { TimerClockSnapshot } from "../logic/timerReducer";
+import type { TimerClockSnapshot } from "../types";
 
 function formatMs(ms: number): string {
   const safe = Number.isFinite(ms) && ms > 0 ? Math.floor(ms) : 0;

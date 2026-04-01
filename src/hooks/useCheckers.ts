@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useReducer } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef } from "react";
 import { CLOCK_CONFIG, GAME_CONFIG } from "../constants";
-import type { Board, BoardSnapshot, Coords, Move, Player, SerializableClockSnapshot } from "../types";
+import type { Board, BoardSnapshot, Coords, Move, Player, SerializableClockSnapshot, TimerState } from "../types";
 import { getCapturingPieces, getValidMovesForPiece, getWinnerByBoard, playerHasCapture } from "../logic/gameRules";
 import { getWinnerByTime } from "../logic/clock";
 import { getActiveEntry, getRenderList } from "../logic/moveHistory";
@@ -8,6 +8,7 @@ import { useGameReducer } from "./useGameReducer";
 import { useStorage } from "./useStorage";
 import { useTimer } from "./useTimer";
 import { createTimerState, timerReducer } from "../logic/timerReducer";
+import type { TimerClockSnapshot } from "../types";
 
 type ClockSnapshot = Readonly<
   SerializableClockSnapshot & {
@@ -52,8 +53,6 @@ function toBoardSnapshot(board: Board): BoardSnapshot {
 export function useCheckers() {
   const { state, dispatch } = useGameReducer();
 
-  const timeWinner = getWinnerByTime(state.clock);
-
   useStorage({ state, dispatch });
 
   const [timer, dispatchTimer] = useReducer(
@@ -64,9 +63,16 @@ export function useCheckers() {
       blackMs: state.clock.blackMs,
       activePlayer: state.clock.activePlayer,
       running: state.clock.running,
-    },
+    } satisfies TimerClockSnapshot,
     createTimerState,
   );
+
+  const timerRef = useRef<TimerState>(timer);
+  useLayoutEffect(() => {
+    timerRef.current = timer;
+  }, [timer]);
+
+  const timeWinner = timer.timeoutWinner ?? getWinnerByTime(state.clock);
 
   useEffect(() => {
     dispatchTimer({
@@ -189,6 +195,7 @@ export function useCheckers() {
 
   const onCellClick = useCallback(
     (r: number, c: number) => {
+      if (timerRef.current.timeoutWinner !== null) return;
       dispatch({ type: "CELL_CLICK", at: { r, c }, perfNowMs: performance.now() });
     },
     [dispatch],
