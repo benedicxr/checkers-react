@@ -50,6 +50,7 @@ export const Board = memo(function Board({
         out.push({ id: p.id, r, c });
       }
     }
+    out.sort((a, b) => a.id - b.id);
     return out;
   }, [board]);
 
