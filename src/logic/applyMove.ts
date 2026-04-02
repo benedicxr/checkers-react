@@ -1,16 +1,15 @@
 import { GAME_CONFIG } from "../constants";
 import type { CoreMove, Player } from "../types";
 import { getCapturesForPiece } from "./gameRules";
-import { beginIfNeeded, appendStep, finalizePending } from "./moveHistory";
-import type { GameCoreState, UndoEntry } from "./persistence";
+import { appendStep, beginIfNeeded, finalizePending } from "./moveHistory";
+import type { GameState, UndoEntry } from "./gameReducer";
 import { cloneBoard, maybePromote, movePiece, removePiece, setPiece } from "./boardUtils";
-import { setActivePlayer } from "./clock";
 
 function otherPlayer(p: Player): Player {
   return p === GAME_CONFIG.WHITE_PLAYER ? GAME_CONFIG.BLACK_PLAYER : GAME_CONFIG.WHITE_PLAYER;
 }
 
-function pushUndoIfNeeded(state: GameCoreState): GameCoreState {
+function pushUndoIfNeeded(state: GameState): GameState {
   if (state.inTurnMove) return state;
   const entry: UndoEntry = {
     turn: state.turn,
@@ -20,7 +19,7 @@ function pushUndoIfNeeded(state: GameCoreState): GameCoreState {
   return { ...state, undo: [...state.undo, entry], inTurnMove: true };
 }
 
-export function applyMove(state: GameCoreState, chosen: CoreMove, perfNowMs: number): GameCoreState {
+export function applyMove(state: GameState, chosen: CoreMove): GameState {
   let next = pushUndoIfNeeded(state);
 
   const isCapture = chosen.type === "capture";
@@ -50,7 +49,6 @@ export function applyMove(state: GameCoreState, chosen: CoreMove, perfNowMs: num
   }
 
   const nextTurn = otherPlayer(next.turn);
-  const clock = setActivePlayer(next.clock, nextTurn, perfNowMs);
 
   return {
     ...next,
@@ -60,8 +58,6 @@ export function applyMove(state: GameCoreState, chosen: CoreMove, perfNowMs: num
     selected: null,
     inTurnMove: false,
     history: finalizePending(next.history),
-    clock,
-    persistRev: next.persistRev + 1,
   };
 }
 

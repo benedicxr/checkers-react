@@ -1,20 +1,35 @@
-import type { CoreMove, Coords, PersistedGameState, Player } from "../types";
+import type { CoreMove, Coords, Player, SerializableBoardSnapshot } from "../types";
 import { GAME_CONFIG } from "../constants";
-import { cloneBoard } from "./boardUtils";
 import { applyMove } from "./applyMove";
 import { getValidMovesForPiece, getWinnerByBoard, playerHasCapture } from "./gameRules";
 import { cancelPending, popLastEntry, setActiveMove } from "./moveHistory";
-import type { GameCoreState } from "./persistence";
-import { createInitialGameState, importPersistedGameState } from "./persistence";
-import { getWinnerByTime, setActivePlayer, stopClock } from "./clock";
+import { cloneBoard } from "./boardUtils";
+import { createInitialBoard } from "./boardUtils";
+import { createMoveHistoryState } from "./moveHistory";
+
+export type UndoEntry = Readonly<{
+  turn: Player;
+  nextId: number;
+  board: SerializableBoardSnapshot;
+}>;
+
+export type GameState = Readonly<{
+  board: SerializableBoardSnapshot;
+  turn: Player;
+  nextId: number;
+  selected: Coords | null;
+  captureChainPiece: Coords | null;
+  undo: ReadonlyArray<UndoEntry>;
+  inTurnMove: boolean;
+  history: ReturnType<typeof createMoveHistoryState>;
+}>;
 
 export type GameAction =
-  | { type: "CELL_CLICK"; at: Coords; perfNowMs: number }
+  | { type: "CELL_CLICK"; at: Coords }
   | { type: "SET_ACTIVE_MOVE"; id: number | null }
-  | { type: "RESET"; perfNowMs: number }
-  | { type: "UNDO"; perfNowMs: number }
-  | { type: "TIME_OUT"; winner: Player; perfNowMs: number }
-  | { type: "LOAD"; persisted: PersistedGameState; perfNowMs: number; unixNowMs: number };
+  | { type: "RESET" }
+  | { type: "UNDO" }
+  | { type: "SET_STATE"; state: GameState };
 
 function sameCoords(a: Coords | null, b: Coords | null): boolean {
   if (a === b) return true;
@@ -26,35 +41,68 @@ function findCoreMoveByDestination(moves: CoreMove[], at: Coords): CoreMove | un
   return moves.find((m) => m.to.r === at.r && m.to.c === at.c);
 }
 
-function withWinnerStop(state: GameCoreState, perfNowMs: number): GameCoreState {
-  const boardWinner = getWinnerByBoard(state.board, state.turn);
-  const timeWinner = getWinnerByTime(state.clock);
-  if (boardWinner === null && timeWinner === null) return state;
-  if (!state.clock.running) return state;
-  return { ...state, clock: stopClock(state.clock, perfNowMs) };
-}
-
 function assertNever(x: never): never {
   throw new Error(`Unexpected action: ${String((x as { type?: unknown } | null)?.type)}`);
 }
 
-export function gameReducer(state: GameCoreState, action: GameAction): GameCoreState {
+export function createInitialGameState(): GameState {
+  const init = createInitialBoard();
+  return {
+    board: init.board,
+    turn: GAME_CONFIG.WHITE_PLAYER,
+    nextId: init.nextId,
+    selected: null,
+    captureChainPiece: null,
+    undo: [],
+    inTurnMove: false,
+    history: createMoveHistoryState(),
+  };
+}
+
+export function gameReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
+    case "SET_STATE": {
+      return action.state;
+    }
+    case "SET_ACTIVE_MOVE": {
+      return { ...state, history: setActiveMove(state.history, action.id) };
+    }
+    case "RESET": {
+      return createInitialGameState();
+    }
+    case "UNDO": {
+      if (state.undo.length === 0) return state;
+      const prev = state.undo[state.undo.length - 1]!;
+      const undo = state.undo.slice(0, -1);
+
+      const canceled = cancelPending(state.history);
+      const history = canceled.had ? canceled.history : popLastEntry(canceled.history);
+
+      const next: GameState = {
+        ...state,
+        board: cloneBoard(prev.board),
+        turn: prev.turn,
+        nextId: prev.nextId,
+        undo,
+        selected: null,
+        captureChainPiece: null,
+        inTurnMove: false,
+        history: { ...history, activeId: null },
+      };
+      return next;
+    }
     case "CELL_CLICK": {
-      const boardWinner = getWinnerByBoard(state.board, state.turn);
-      const timeWinner = getWinnerByTime(state.clock);
-      if (boardWinner !== null || timeWinner !== null) return state;
+      if (getWinnerByBoard(state.board, state.turn) !== null) return state;
 
       const at = action.at;
-
       const selected = state.captureChainPiece ?? state.selected;
+
       if (selected) {
-        const capturesOnly =
-          state.captureChainPiece !== null ? true : playerHasCapture(state.board, state.turn);
+        const capturesOnly = state.captureChainPiece !== null ? true : playerHasCapture(state.board, state.turn);
         const coreMoves = getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly });
         const chosen = findCoreMoveByDestination(coreMoves, at);
         if (chosen) {
-          return withWinnerStop(applyMove(state, chosen, action.perfNowMs), action.perfNowMs);
+          return applyMove(state, chosen);
         }
 
         if (sameCoords(selected, at)) {
@@ -76,65 +124,9 @@ export function gameReducer(state: GameCoreState, action: GameAction): GameCoreS
 
       return { ...state, selected: { ...at }, history: setActiveMove(state.history, null) };
     }
-    case "SET_ACTIVE_MOVE": {
-      return { ...state, history: setActiveMove(state.history, action.id) };
-    }
-    case "RESET": {
-      const base = createInitialGameState(action.perfNowMs);
-      return { ...base, persistRev: state.persistRev + 1 };
-    }
-    case "UNDO": {
-      if (state.undo.length === 0) return state;
-      const prev = state.undo[state.undo.length - 1]!;
-      const undo = state.undo.slice(0, -1);
-
-      const canceled = cancelPending(state.history);
-      const history = canceled.had ? canceled.history : popLastEntry(canceled.history);
-
-      const clock = setActivePlayer(state.clock, prev.turn, action.perfNowMs);
-      const next: GameCoreState = {
-        ...state,
-        board: cloneBoard(prev.board),
-        turn: prev.turn,
-        nextId: prev.nextId,
-        undo,
-        selected: null,
-        captureChainPiece: null,
-        inTurnMove: false,
-        history: { ...history, activeId: null },
-        clock,
-        persistRev: state.persistRev + 1,
-      };
-      return withWinnerStop(next, action.perfNowMs);
-    }
-    case "TIME_OUT": {
-      const boardWinner = getWinnerByBoard(state.board, state.turn);
-      const timeWinner = getWinnerByTime(state.clock);
-      if (boardWinner !== null || timeWinner !== null) return state;
-
-      const loser: Player =
-        action.winner === GAME_CONFIG.WHITE_PLAYER ? GAME_CONFIG.BLACK_PLAYER : GAME_CONFIG.WHITE_PLAYER;
-      let clock = stopClock(state.clock, action.perfNowMs);
-      clock = loser === GAME_CONFIG.WHITE_PLAYER ? { ...clock, whiteMs: 0 } : { ...clock, blackMs: 0 };
-      return { ...state, clock, persistRev: state.persistRev + 1 };
-    }
-    case "LOAD": {
-      const next = importPersistedGameState(action.persisted, action.perfNowMs, action.unixNowMs);
-      if (!next) return state;
-      let clock = next.clock;
-      if (next.clock.enabled && next.clock.running) {
-        clock = { ...next.clock, lastPerfNowMs: action.perfNowMs };
-      } else {
-        clock = { ...next.clock, lastPerfNowMs: null };
-      }
-      return { ...next, clock, persistRev: state.persistRev + 1 };
-    }
     default: {
       return assertNever(action);
     }
   }
 }
 
-export function createDefaultGameState(perfNowMs: number): GameCoreState {
-  return createInitialGameState(perfNowMs);
-}

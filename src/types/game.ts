@@ -1,3 +1,5 @@
+import type { SerializableTimerState } from "./timer";
+
 export type Player = 1 | 2;
 export type Color = Player;
 
@@ -37,41 +39,41 @@ export type BoardSnapshot = ReadonlyArray<ReadonlyArray<CheckerSnapshot | null>>
 export type SerializableBoardSnapshot = (CheckerSnapshot | null)[][];
 export type Board = SerializableBoardSnapshot;
 
-export interface SerializableHistoryEntry {
+export interface PersistedUndoEntry {
   turn: Player;
   nextId: number;
   board: SerializableBoardSnapshot;
 }
 
-export interface SerializableModelState {
+export interface PersistedModelState {
   turn: Player;
   nextId: number;
   board: SerializableBoardSnapshot;
-  history: SerializableHistoryEntry[];
 }
 
-export interface SerializableClockSnapshot {
-  whiteMs: number;
-  blackMs: number;
-  activePlayer: Player;
-  running: boolean;
-}
+export type PersistedPendingMove = Readonly<{
+  id: number;
+  player: Player;
+  isCapture: boolean;
+  path: Coords[];
+}>;
 
-export interface SerializableClockState extends SerializableClockSnapshot {
-  enabled: boolean;
-  initialMs: number;
-  lastUpdateUnixMs: number;
-}
+export type PersistedMoveHistoryState = Readonly<{
+  entries: ReadonlyArray<MoveHistoryEntry>;
+  nextId: number;
+  pending: PersistedPendingMove | null;
+  activeId: number | null;
+}>;
 
-export interface SerializableControllerState {
-  clock?: SerializableClockState;
-}
-
-export type PersistedGameState = {
-  version: 1;
-  model: SerializableModelState;
-  controller?: SerializableControllerState;
-};
+export type PersistedGameState = Readonly<{
+  version: 2;
+  model: PersistedModelState;
+  controller?: Readonly<{
+    undo?: ReadonlyArray<PersistedUndoEntry>;
+    history?: PersistedMoveHistoryState;
+    timer?: SerializableTimerState;
+  }>;
+}>;
 
 export type MoveHistoryEntry = Readonly<{
   id: number;
@@ -79,4 +81,3 @@ export type MoveHistoryEntry = Readonly<{
   text: string;
   path: Coords[];
 }>;
-

@@ -1,20 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef } from "react";
 import { CLOCK_CONFIG, GAME_CONFIG } from "../constants";
-import type { Board, BoardSnapshot, Coords, Move, Player, SerializableClockSnapshot, TimerState } from "../types";
-import { getCapturingPieces, getValidMovesForPiece, getWinnerByBoard, playerHasCapture } from "../logic/gameRules";
-import { getWinnerByTime } from "../logic/clock";
+import type { Board, BoardSnapshot, Clock, Coords, Move, Player, TimerClockSnapshot, TimerState } from "../types";
 import { getActiveEntry, getRenderList } from "../logic/moveHistory";
-import { useGameReducer } from "./useGameReducer";
+import { getWinner, getValidMoves, getCapturedCounts } from "../logic/selectors";
+import { createInitialGameState, gameReducer } from "../logic/gameReducer";
+import type { GameState } from "../logic/gameReducer";
+import { exportPersistedGameState, importPersistedGameState } from "../logic/persistence";
+import { createTimerState, timerReducer } from "../logic/timerReducer";
 import { useStorage } from "./useStorage";
 import { useTimer } from "./useTimer";
-import { createTimerState, timerReducer } from "../logic/timerReducer";
-import type { TimerClockSnapshot } from "../types";
-
-type ClockSnapshot = Readonly<
-  SerializableClockSnapshot & {
-    enabled: boolean;
-  }
->;
 
 type CheckersSnapshot = Readonly<{
   board: BoardSnapshot;
@@ -29,64 +23,63 @@ type CheckersSnapshot = Readonly<{
   capturedByWhite: number;
   capturedByBlack: number;
   canUndo: boolean;
-  clock: ClockSnapshot;
+  clock: TimerClockSnapshot;
   moves: ReadonlyArray<{ id: number; text: string }>;
   activeMoveId: number | null;
   activeMovePath: readonly Coords[] | null;
 }>;
 
-const EMPTY_MOVES: readonly Move[] = [];
-const EMPTY_COORDS: readonly Coords[] = [];
 const EMPTY_RENDER_MOVES: ReadonlyArray<{ id: number; text: string }> = [];
-
-function coreMovesToUi(moves: ReturnType<typeof getValidMovesForPiece>): Move[] {
-  return moves.map((m) => {
-    if (m.type === "simple") return { r: m.to.r, c: m.to.c, type: "move" as const };
-    return { r: m.to.r, c: m.to.c, type: "jump" as const, target: { ...m.captured } };
-  });
-}
 
 function toBoardSnapshot(board: Board): BoardSnapshot {
   return board as unknown as BoardSnapshot;
 }
 
-export function useCheckers() {
-  const { state, dispatch } = useGameReducer();
+function createDefaultTimerClockSnapshot(activePlayer: Player): TimerClockSnapshot {
+  const initialMs = CLOCK_CONFIG.INITIAL_TIME_MS;
+  return {
+    enabled: CLOCK_CONFIG.ENABLED,
+    initialMs,
+    whiteMs: initialMs,
+    blackMs: initialMs,
+    activePlayer,
+    running: CLOCK_CONFIG.ENABLED,
+  };
+}
 
-  useStorage({ state, dispatch });
+export function useCheckers(clock: Clock = { now: () => performance.now() }) {
+  const [persistRev, bumpPersist] = useReducer((x: number) => x + 1, 0);
 
+  const [state, dispatch] = useReducer(gameReducer, undefined, createInitialGameState);
   const [timer, dispatchTimer] = useReducer(
     timerReducer,
-    {
-      enabled: state.clock.enabled,
-      whiteMs: state.clock.whiteMs,
-      blackMs: state.clock.blackMs,
-      activePlayer: state.clock.activePlayer,
-      running: state.clock.running,
-    } satisfies TimerClockSnapshot,
+    createDefaultTimerClockSnapshot(GAME_CONFIG.WHITE_PLAYER),
     createTimerState,
   );
 
+  const stateRef = useRef<GameState>(state);
   const timerRef = useRef<TimerState>(timer);
+  const snapshotRef = useRef<CheckersSnapshot | null>(null);
+  const suppressTurnSyncRef = useRef(false);
+
   useLayoutEffect(() => {
+    stateRef.current = state;
     timerRef.current = timer;
-  }, [timer]);
+  }, [state, timer]);
 
-  const timeWinner = timer.timeoutWinner ?? getWinnerByTime(state.clock);
+  const onHydrate = useCallback((raw: unknown, meta: { perfNowMs: number; unixNowMs: number }) => {
+    const imported = importPersistedGameState({ raw, perfNowMs: meta.perfNowMs, unixNowMs: meta.unixNowMs });
+    if (!imported) return;
+    suppressTurnSyncRef.current = true;
+    dispatch({ type: "SET_STATE", state: imported.game });
+    dispatchTimer({ type: "SET_STATE", state: imported.timer });
+  }, []);
 
-  useEffect(() => {
-    dispatchTimer({
-      type: "SYNC_FROM_GAME",
-      clock: {
-        enabled: state.clock.enabled,
-        whiteMs: state.clock.whiteMs,
-        blackMs: state.clock.blackMs,
-        activePlayer: state.clock.activePlayer,
-        running: state.clock.running,
-      },
-      perfNowMs: performance.now(),
-    });
-  }, [state.clock.activePlayer, state.clock.blackMs, state.clock.enabled, state.clock.running, state.clock.whiteMs]);
+  useStorage({
+    rev: persistRev,
+    onHydrate,
+    getPersisted: ({ unixNowMs }) => exportPersistedGameState({ game: stateRef.current, timer: timerRef.current, unixNowMs }),
+  });
 
   useTimer({
     enabled: timer.enabled && timer.running,
@@ -96,60 +89,43 @@ export function useCheckers() {
 
   useEffect(() => {
     if (timer.timeoutWinner === null) return;
-    dispatch({ type: "TIME_OUT", winner: timer.timeoutWinner, perfNowMs: performance.now() });
+    bumpPersist();
     dispatchTimer({ type: "ACK_TIMEOUT" });
-  }, [dispatch, timer.timeoutWinner]);
+  }, [timer.timeoutWinner]);
 
-  const gameSnapshot = useMemo(() => {
-    const boardWinner = getWinnerByBoard(state.board, state.turn);
-    const winner = boardWinner ?? timeWinner;
+  useEffect(() => {
+    if (suppressTurnSyncRef.current) {
+      suppressTurnSyncRef.current = false;
+      return;
+    }
+    if (!timer.enabled) return;
+    if (timer.activePlayer === state.turn) return;
+    dispatchTimer({ type: "SWITCH_PLAYER", nextPlayer: state.turn, perfNowMs: clock.now() });
+  }, [state.turn, timer.activePlayer, timer.enabled, clock]);
 
-    let mustCapture = false;
+  useEffect(() => {
+    if (!timer.enabled) return;
+    const winner = getWinner(state, timer);
+
     if (winner !== null) {
-      mustCapture = false;
-    } else if (state.captureChainPiece !== null) {
-      mustCapture = true;
-    } else {
-      mustCapture = playerHasCapture(state.board, state.turn);
+      if (timer.running) dispatchTimer({ type: "STOP", perfNowMs: clock.now() });
+      return;
     }
 
-    const selected = state.captureChainPiece !== null ? state.captureChainPiece : state.selected;
-
-    let availableMoves: readonly Move[] = EMPTY_MOVES;
-    if (winner !== null || !selected) {
-      availableMoves = EMPTY_MOVES;
-    } else if (state.captureChainPiece !== null) {
-      availableMoves = coreMovesToUi(getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly: true }));
-    } else {
-      availableMoves = coreMovesToUi(
-        getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly: mustCapture }),
-      );
+    if (!timer.running) {
+      dispatchTimer({ type: "START", perfNowMs: clock.now() });
     }
+  }, [state.board, state.turn, timer, timer.enabled, timer.running, timer.timeoutWinner, clock, state]);
 
-    let capturingPieces: readonly Coords[] = EMPTY_COORDS;
-    if (winner !== null || state.captureChainPiece !== null) {
-      capturingPieces = EMPTY_COORDS;
-    } else if (mustCapture) {
-      capturingPieces = getCapturingPieces(state.board, state.turn);
-    } else {
-      capturingPieces = EMPTY_COORDS;
-    }
-
-    const capturableTargets =
-      availableMoves.length === 0
-        ? EMPTY_COORDS
-        : (availableMoves
-            .filter((m): m is Extract<Move, { type: "jump" }> => m.type === "jump")
-            .map((m) => ({ ...m.target })) as readonly Coords[]);
-
-    const currentWhite = state.board.flat().filter((p) => p && p.color === GAME_CONFIG.WHITE_PLAYER).length;
-    const currentBlack = state.board.flat().filter((p) => p && p.color === GAME_CONFIG.BLACK_PLAYER).length;
-
-    const capturedByWhite = Math.max(0, state.initialBlack - currentBlack);
-    const capturedByBlack = Math.max(0, state.initialWhite - currentWhite);
+  const snapshot = useMemo((): CheckersSnapshot => {
+    const winner = getWinner(state, timer);
+    const { mustCapture, availableMoves, capturingPieces, capturableTargets, selected } = getValidMoves(
+      state,
+      winner,
+    );
+    const { capturedByWhite, capturedByBlack } = getCapturedCounts(state);
 
     const activeEntry = getActiveEntry(state.history);
-
     const moves = state.history.entries.length === 0 ? EMPTY_RENDER_MOVES : getRenderList(state.history);
 
     return {
@@ -165,64 +141,54 @@ export function useCheckers() {
       capturedByWhite,
       capturedByBlack,
       canUndo: state.undo.length > 0,
+      clock: {
+        enabled: timer.enabled,
+        initialMs: timer.initialMs,
+        whiteMs: timer.whiteMs,
+        blackMs: timer.blackMs,
+        activePlayer: timer.activePlayer,
+        running: timer.running,
+      },
       moves,
       activeMoveId: state.history.activeId,
       activeMovePath: activeEntry ? activeEntry.path : null,
     };
-  }, [
-    state.board,
-    state.captureChainPiece,
-    state.history,
-    state.initialBlack,
-    state.initialWhite,
-    state.selected,
-    state.turn,
-    state.undo.length,
-    timeWinner,
-  ]);
+  }, [state, timer]);
 
-  const clockSnapshot: ClockSnapshot = useMemo(() => {
-    const clockSnap: SerializableClockSnapshot = {
-      whiteMs: timer.whiteMs,
-      blackMs: timer.blackMs,
-      activePlayer: timer.activePlayer,
-      running: timer.running,
-    };
-    return { enabled: timer.enabled, ...clockSnap };
-  }, [timer]);
+  useLayoutEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
 
-  const snapshot: CheckersSnapshot = { ...gameSnapshot, clock: clockSnapshot };
+  const onCellClick = useCallback((r: number, c: number) => {
+    if (timerRef.current.timeoutWinner !== null) return;
 
-  const onCellClick = useCallback(
-    (r: number, c: number) => {
-      if (timerRef.current.timeoutWinner !== null) return;
-      dispatch({ type: "CELL_CLICK", at: { r, c }, perfNowMs: performance.now() });
-    },
-    [dispatch],
-  );
+    const snap = snapshotRef.current;
+    const isMoveClick = Boolean(snap && snap.winner === null && snap.availableMoves.some((m) => m.r === r && m.c === c));
+
+    dispatch({ type: "CELL_CLICK", at: { r, c } });
+    if (isMoveClick) bumpPersist();
+  }, []);
 
   const reset = useCallback(() => {
-    dispatch({ type: "RESET", perfNowMs: performance.now() });
-  }, [dispatch]);
+    dispatch({ type: "RESET" });
+    dispatchTimer({
+      type: "RESET",
+      timer: createDefaultTimerClockSnapshot(GAME_CONFIG.WHITE_PLAYER),
+      perfNowMs: clock.now(),
+    });
+    bumpPersist();
+  }, [clock]);
 
   const undo = useCallback((): boolean => {
-    if (state.undo.length === 0) return false;
-    dispatch({ type: "UNDO", perfNowMs: performance.now() });
+    if (stateRef.current.undo.length === 0) return false;
+    dispatch({ type: "UNDO" });
+    bumpPersist();
     return true;
-  }, [dispatch, state.undo.length]);
+  }, []);
 
-  const setActiveMove = useCallback(
-    (id: number | null) => {
-      dispatch({ type: "SET_ACTIVE_MOVE", id });
-    },
-    [dispatch],
-  );
+  const setActiveMove = useCallback((id: number | null) => {
+    dispatch({ type: "SET_ACTIVE_MOVE", id });
+  }, []);
 
-  return {
-    snapshot,
-    onCellClick,
-    reset,
-    undo,
-    setActiveMove,
-  };
+  return { snapshot, onCellClick, reset, undo, setActiveMove };
 }

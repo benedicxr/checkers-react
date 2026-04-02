@@ -1,6 +1,6 @@
 import { GAME_CONFIG, GAME_RULES } from "../constants";
 import type { Board, Color, Coords, CoreMove, Piece } from "../types";
-import { getPiece, isInside } from "./boardUtils";
+import { getPiece, isInside, countPieces } from "./boardUtils";
 
 type DiagonalDelta = Readonly<{ dr: -1 | 1; dc: -1 | 1 }>;
 
@@ -111,17 +111,6 @@ export function getWinnerByBoard(board: Board, turn: Color): Color | null {
   }
 
   return null;
-}
-
-function countPieces(board: Board, player: Color): number {
-  let count = 0;
-  for (let r = 0; r < GAME_CONFIG.ROWS; r++) {
-    for (let c = 0; c < GAME_CONFIG.COLS; c++) {
-      const p = board[r]![c]!;
-      if (p && p.color === player) count++;
-    }
-  }
-  return count;
 }
 
 function getCaptureDirections(piece: Piece): number[] {

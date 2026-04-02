@@ -1,61 +1,40 @@
-import { GAME_CONFIG } from "../constants";
+import { CLOCK_CONFIG, GAME_CONFIG } from "../constants";
 import type {
-  Board,
+  Coords,
   PersistedGameState,
-  Player,
+  PersistedModelState,
+  PersistedMoveHistoryState,
+  PersistedUndoEntry,
   SerializableBoardSnapshot,
-  SerializableHistoryEntry,
+  TimerState,
 } from "../types";
-import { createInitialBoard, countPieces } from "./boardUtils";
-import type { ClockState } from "./clock";
-import { createClockState, exportClockState, importClockState, resetClock } from "./clock";
+import type { MoveHistoryEntry, PersistedPendingMove } from "../types";
 import type { MoveHistoryState } from "./moveHistory";
 import { createMoveHistoryState } from "./moveHistory";
+import type { GameState, UndoEntry } from "./gameReducer";
+import { createInitialGameState } from "./gameReducer";
+import { createTimerState, exportSerializableTimerState, importSerializableTimerState } from "./timerReducer";
 
-export type UndoEntry = Readonly<{
-  turn: Player;
-  nextId: number;
-  board: SerializableBoardSnapshot;
-}>;
+function isValidCoords(x: unknown): x is Coords {
+  if (!x || typeof x !== "object") return false;
+  const c = x as { r?: unknown; c?: unknown };
+  return Number.isInteger(c.r) && Number.isInteger(c.c);
+}
 
-export type GameCoreState = Readonly<{
-  board: Board;
-  turn: Player;
-  nextId: number;
-  undo: ReadonlyArray<UndoEntry>;
-  selected: { r: number; c: number } | null;
-  captureChainPiece: { r: number; c: number } | null;
-  inTurnMove: boolean;
-  initialWhite: number;
-  initialBlack: number;
-  clock: ClockState;
-  history: MoveHistoryState;
-  persistRev: number;
-}>;
-
-export function createInitialGameState(perfNowMs: number): GameCoreState {
-  const init = createInitialBoard();
-  const clock = resetClock(createClockState({ activePlayer: GAME_CONFIG.WHITE_PLAYER }), GAME_CONFIG.WHITE_PLAYER, perfNowMs);
-  return {
-    board: init.board,
-    turn: GAME_CONFIG.WHITE_PLAYER,
-    nextId: init.nextId,
-    undo: [],
-    selected: null,
-    captureChainPiece: null,
-    inTurnMove: false,
-    initialWhite: init.initialWhite,
-    initialBlack: init.initialBlack,
-    clock,
-    history: createMoveHistoryState(),
-    persistRev: 0,
-  };
+function isValidMoveHistoryEntry(x: unknown): x is MoveHistoryEntry {
+  if (!x || typeof x !== "object") return false;
+  const e = x as { id?: unknown; player?: unknown; text?: unknown; path?: unknown };
+  if (!Number.isInteger(e.id) || (e.id as number) < 1) return false;
+  if (e.player !== GAME_CONFIG.WHITE_PLAYER && e.player !== GAME_CONFIG.BLACK_PLAYER) return false;
+  if (typeof e.text !== "string") return false;
+  if (!Array.isArray(e.path) || e.path.some((p) => !isValidCoords(p))) return false;
+  return true;
 }
 
 function isValidBoardSnapshot(board: unknown): board is SerializableBoardSnapshot {
-  if (!Array.isArray(board) || board.length !== GAME_CONFIG.ROWS) return false;
+  if (!Array.isArray(board) || board.length !== 8) return false;
   for (const row of board) {
-    if (!Array.isArray(row) || row.length !== GAME_CONFIG.COLS) return false;
+    if (!Array.isArray(row) || row.length !== 8) return false;
     for (const cell of row) {
       if (cell === null) continue;
       if (!cell || typeof cell !== "object") return false;
@@ -68,93 +47,161 @@ function isValidBoardSnapshot(board: unknown): board is SerializableBoardSnapsho
   return true;
 }
 
-export function exportPersistedGameState(state: GameCoreState, unixNowMs: number): PersistedGameState {
-  const board: SerializableBoardSnapshot = state.board.map((row) => row.map((cell) => (cell ? { ...cell } : null)));
-  const history: SerializableHistoryEntry[] = state.undo.map((h) => ({
-    turn: h.turn,
-    nextId: h.nextId,
-    board: h.board.map((row) => row.map((cell) => (cell ? { ...cell } : null))),
-  }));
+function cloneBoard(board: SerializableBoardSnapshot): SerializableBoardSnapshot {
+  return board.map((row) => row.map((cell) => (cell ? { ...cell } : null)));
+}
+
+function exportPersistedModelState(game: GameState): PersistedModelState {
+  return {
+    turn: game.turn,
+    nextId: game.nextId,
+    board: cloneBoard(game.board),
+  };
+}
+
+function importPersistedModelState(raw: unknown): Pick<GameState, "board" | "turn" | "nextId"> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Partial<PersistedModelState>;
+  if (m.turn !== GAME_CONFIG.WHITE_PLAYER && m.turn !== GAME_CONFIG.BLACK_PLAYER) return null;
+  if (typeof m.nextId !== "number" || !Number.isInteger(m.nextId) || m.nextId < 1) return null;
+  if (!isValidBoardSnapshot(m.board)) return null;
+  return { turn: m.turn, nextId: m.nextId, board: cloneBoard(m.board) };
+}
+
+function exportPersistedUndo(undo: ReadonlyArray<UndoEntry>): ReadonlyArray<PersistedUndoEntry> {
+  return undo.map((u) => ({ turn: u.turn, nextId: u.nextId, board: cloneBoard(u.board) }));
+}
+
+function importPersistedUndo(raw: unknown): UndoEntry[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: UndoEntry[] = [];
+  for (const h of raw) {
+    if (!h || typeof h !== "object") return null;
+    const entry = h as Partial<PersistedUndoEntry>;
+    if (entry.turn !== GAME_CONFIG.WHITE_PLAYER && entry.turn !== GAME_CONFIG.BLACK_PLAYER) return null;
+    if (typeof entry.nextId !== "number" || !Number.isInteger(entry.nextId) || entry.nextId < 1) return null;
+    if (!isValidBoardSnapshot(entry.board)) return null;
+    out.push({ turn: entry.turn, nextId: entry.nextId, board: cloneBoard(entry.board) });
+  }
+  return out;
+}
+
+function exportPersistedHistory(history: MoveHistoryState): PersistedMoveHistoryState {
+  return {
+    entries: history.entries.map((e) => ({ ...e, path: e.path.map((p) => ({ ...p })) })),
+    nextId: history.nextId,
+    pending: history.pending
+      ? {
+          id: history.pending.id,
+          player: history.pending.player,
+          isCapture: history.pending.isCapture,
+          path: history.pending.path.map((p) => ({ ...p })),
+        }
+      : null,
+    activeId: history.activeId,
+  };
+}
+
+function importPersistedHistory(raw: unknown): MoveHistoryState | null {
+  if (!raw || typeof raw !== "object") return null;
+  const h = raw as Partial<PersistedMoveHistoryState>;
+  if (!Array.isArray(h.entries) || h.entries.some((e) => !isValidMoveHistoryEntry(e))) return null;
+  if (typeof h.nextId !== "number" || !Number.isInteger(h.nextId) || h.nextId < 1) return null;
+  if (h.activeId !== null && (typeof h.activeId !== "number" || !Number.isInteger(h.activeId) || h.activeId < 1))
+    return null;
+
+  const pendingRaw = h.pending as PersistedPendingMove | null | undefined;
+  let pending: PersistedPendingMove | null = null;
+  if (pendingRaw !== null && pendingRaw !== undefined) {
+    if (!pendingRaw || typeof pendingRaw !== "object") return null;
+    if (!Number.isInteger(pendingRaw.id) || pendingRaw.id < 1) return null;
+    if (pendingRaw.player !== GAME_CONFIG.WHITE_PLAYER && pendingRaw.player !== GAME_CONFIG.BLACK_PLAYER) return null;
+    if (!Array.isArray(pendingRaw.path) || pendingRaw.path.some((p) => !isValidCoords(p))) return null;
+    pending = {
+      id: pendingRaw.id,
+      player: pendingRaw.player,
+      isCapture: pendingRaw.isCapture,
+      path: pendingRaw.path.map((p: Coords) => ({ ...p })),
+    };
+  }
 
   return {
-    version: 1,
-    model: {
-      turn: state.turn,
-      nextId: state.nextId,
-      board,
-      history,
-    },
+    entries: h.entries.map((e) => ({ ...e, path: e.path.map((p: Coords) => ({ ...p })) })),
+    nextId: h.nextId,
+    pending,
+    activeId: h.activeId ?? null,
+  };
+}
+
+export function exportPersistedGameState({
+  game,
+  timer,
+  unixNowMs,
+}: {
+  game: GameState;
+  timer: TimerState;
+  unixNowMs: number;
+}): PersistedGameState {
+  return {
+    version: 2,
+    model: exportPersistedModelState(game),
     controller: {
-      clock: exportClockState(state.clock, unixNowMs),
+      undo: exportPersistedUndo(game.undo),
+      history: exportPersistedHistory(game.history),
+      timer: exportSerializableTimerState(timer, unixNowMs),
     },
   };
 }
 
-export function importPersistedGameState(
-  raw: unknown,
-  perfNowMs: number,
-  unixNowMs: number,
-): GameCoreState | null {
-  try {
-    if (!raw || typeof raw !== "object") return null;
-    const s = raw as Partial<PersistedGameState>;
-    if (s.version !== 1) return null;
-    if (!s.model || typeof s.model !== "object") return null;
+export function importPersistedGameState({
+  raw,
+  perfNowMs,
+  unixNowMs,
+}: {
+  raw: unknown;
+  perfNowMs: number;
+  unixNowMs: number;
+}): { game: GameState; timer: TimerState } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Partial<PersistedGameState>;
+  if (s.version !== 2) return null;
 
-    const model = s.model as Partial<PersistedGameState["model"]>;
-    const { turn, nextId, board, history } = model;
-    if (turn !== GAME_CONFIG.WHITE_PLAYER && turn !== GAME_CONFIG.BLACK_PLAYER) return null;
-    if (typeof nextId !== "number" || !Number.isInteger(nextId) || nextId < 1) return null;
-    if (!isValidBoardSnapshot(board)) return null;
+  const importedModel = importPersistedModelState(s.model);
+  if (!importedModel) return null;
 
-    const normalizedHistory = Array.isArray(history) ? history : [];
-    const undo: UndoEntry[] = [];
-    for (const h of normalizedHistory) {
-      if (!h || typeof h !== "object") return null;
-      const entry = h as Partial<UndoEntry>;
-      if (entry.turn !== GAME_CONFIG.WHITE_PLAYER && entry.turn !== GAME_CONFIG.BLACK_PLAYER) return null;
-      if (typeof entry.nextId !== "number" || !Number.isInteger(entry.nextId) || entry.nextId < 1) return null;
-      if (!isValidBoardSnapshot(entry.board)) return null;
-      undo.push({
-        turn: entry.turn as Player,
-        nextId: entry.nextId,
-        board: entry.board!.map((row) => row.map((cell) => (cell ? { ...cell } : null))),
-      });
-    }
+  const controllerRaw =
+    s.controller && typeof s.controller === "object" ? (s.controller as PersistedGameState["controller"]) : undefined;
 
-    const controller =
-      s.controller && typeof s.controller === "object" ? (s.controller as PersistedGameState["controller"]) : undefined;
-    const clockRaw = controller?.clock;
-    const importedClock = clockRaw ? importClockState(clockRaw, perfNowMs, unixNowMs) : null;
-    const clock =
-      importedClock ??
-      resetClock(createClockState({ activePlayer: turn as Player }), turn as Player, perfNowMs);
+  const undo = controllerRaw?.undo ? importPersistedUndo(controllerRaw.undo) : [];
+  if (undo === null) return null;
 
-    const init = createInitialBoard();
+  const history = controllerRaw?.history ? importPersistedHistory(controllerRaw.history) : createMoveHistoryState();
+  if (!history) return null;
 
-    const base: GameCoreState = {
-      board: board.map((row) => row.map((cell) => (cell ? { ...cell } : null))),
-      turn: turn as Player,
-      nextId,
-      undo,
-      selected: null,
-      captureChainPiece: null,
-      inTurnMove: false,
-      initialWhite: init.initialWhite,
-      initialBlack: init.initialBlack,
-      clock,
-      history: createMoveHistoryState(),
-      persistRev: 0,
-    };
+  const base = createInitialGameState();
+  const game: GameState = {
+    ...base,
+    board: importedModel.board,
+    turn: importedModel.turn,
+    nextId: importedModel.nextId,
+    selected: null,
+    captureChainPiece: null,
+    undo,
+    inTurnMove: false,
+    history,
+  };
 
-    const currentWhite = countPieces(base.board, GAME_CONFIG.WHITE_PLAYER);
-    const currentBlack = countPieces(base.board, GAME_CONFIG.BLACK_PLAYER);
-    return {
-      ...base,
-      initialWhite: Math.max(base.initialWhite, currentWhite),
-      initialBlack: Math.max(base.initialBlack, currentBlack),
-    };
-  } catch {
-    return null;
-  }
+  const fallbackTimer = createTimerState({
+    enabled: CLOCK_CONFIG.ENABLED,
+    initialMs: CLOCK_CONFIG.INITIAL_TIME_MS,
+    whiteMs: CLOCK_CONFIG.INITIAL_TIME_MS,
+    blackMs: CLOCK_CONFIG.INITIAL_TIME_MS,
+    activePlayer: game.turn,
+    running: CLOCK_CONFIG.ENABLED,
+  });
+  const timer =
+    controllerRaw?.timer ? importSerializableTimerState(controllerRaw.timer, perfNowMs, unixNowMs) ?? fallbackTimer : fallbackTimer;
+
+  return { game, timer };
 }
+

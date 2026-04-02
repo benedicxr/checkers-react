@@ -29,16 +29,24 @@ export const Board = memo(function Board({
     return map;
   }, [availableMoves]);
 
-  const capturingSet = new Set(capturingPieces.map((p) => cellKey(p.r, p.c)));
+  const capturingSet = useMemo(() => {
+    return new Set(capturingPieces.map((p) => cellKey(p.r, p.c)));
+  }, [capturingPieces]);
 
-  const historySet = new Set<string>();
-  let historyStart: string | null = null;
-  let historyEnd: string | null = null;
-  if (activeMovePath && activeMovePath.length > 0) {
-    for (const p of activeMovePath) historySet.add(cellKey(p.r, p.c));
-    historyStart = cellKey(activeMovePath[0]!.r, activeMovePath[0]!.c);
-    historyEnd = cellKey(activeMovePath[activeMovePath.length - 1]!.r, activeMovePath[activeMovePath.length - 1]!.c);
-  }
+  const history = useMemo(() => {
+    const historySet = new Set<string>();
+    let historyStart: string | null = null;
+    let historyEnd: string | null = null;
+    if (activeMovePath && activeMovePath.length > 0) {
+      for (const p of activeMovePath) historySet.add(cellKey(p.r, p.c));
+      historyStart = cellKey(activeMovePath[0]!.r, activeMovePath[0]!.c);
+      historyEnd = cellKey(
+        activeMovePath[activeMovePath.length - 1]!.r,
+        activeMovePath[activeMovePath.length - 1]!.c,
+      );
+    }
+    return { historySet, historyStart, historyEnd };
+  }, [activeMovePath]);
 
   const pieces = useMemo(() => {
     const out: Array<{ id: number; r: number; c: number }> = [];
@@ -63,9 +71,9 @@ export const Board = memo(function Board({
             row={row}
             col={col}
             availableMove={availableByCell.get(cellKey(row, col)) ?? null}
-            historyMark={historySet.has(cellKey(row, col))}
-            historyStart={historyStart === cellKey(row, col)}
-            historyEnd={historyEnd === cellKey(row, col)}
+            historyMark={history.historySet.has(cellKey(row, col))}
+            historyStart={history.historyStart === cellKey(row, col)}
+            historyEnd={history.historyEnd === cellKey(row, col)}
             onClick={onCellClick}
           />
         )),

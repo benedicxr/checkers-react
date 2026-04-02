@@ -1,22 +1,21 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
-import type { GameAction } from "../logic/gameReducer";
-import { exportPersistedGameState } from "../logic/persistence";
-import type { GameCoreState } from "../logic/persistence";
-import { GAME_STATE_STORAGE_KEY, loadGameState, saveGameState } from "../storage/gameStorage";
+import { GAME_STATE_STORAGE_KEY, loadGameStateRaw, saveGameStateRaw } from "../storage/gameStorage";
 
 export function useStorage({
-  state,
-  dispatch,
   enabled = true,
+  rev,
+  onHydrate,
+  getPersisted,
 }: {
-  state: GameCoreState;
-  dispatch: (action: GameAction) => void;
   enabled?: boolean;
+  rev: number;
+  onHydrate: (raw: unknown, meta: { perfNowMs: number; unixNowMs: number }) => void;
+  getPersisted: (meta: { unixNowMs: number }) => unknown;
 }): void {
-  const stateRef = useRef(state);
+  const getPersistedRef = useRef(getPersisted);
   useLayoutEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+    getPersistedRef.current = getPersisted;
+  }, [getPersisted]);
 
   const didHydrateRef = useRef(false);
 
@@ -24,24 +23,21 @@ export function useStorage({
     if (!enabled) return;
     if (typeof window === "undefined") return;
 
-    const perfNowMs = performance.now();
-    const unixNowMs = Date.now();
-    const persisted = loadGameState();
-    if (persisted) {
-      dispatch({ type: "LOAD", persisted, perfNowMs, unixNowMs });
+    const raw = loadGameStateRaw();
+    if (raw !== null) {
+      onHydrate(raw, { perfNowMs: performance.now(), unixNowMs: Date.now() });
     }
-
     didHydrateRef.current = true;
-  }, [dispatch, enabled]);
+  }, [enabled, onHydrate]);
 
   useEffect(() => {
     if (!enabled) return;
     if (!didHydrateRef.current) return;
-    if (state.persistRev === 0) return;
+    if (rev === 0) return;
 
-    const persisted = exportPersistedGameState(stateRef.current, Date.now());
-    saveGameState(persisted);
-  }, [enabled, state.persistRev]);
+    const persisted = getPersistedRef.current({ unixNowMs: Date.now() });
+    saveGameStateRaw(persisted);
+  }, [enabled, rev]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -51,12 +47,13 @@ export function useStorage({
       if (e.storageArea !== localStorage) return;
       if (e.key !== GAME_STATE_STORAGE_KEY) return;
 
-      const persisted = loadGameState();
-      if (!persisted) return;
-      dispatch({ type: "LOAD", persisted, perfNowMs: performance.now(), unixNowMs: Date.now() });
+      const raw = loadGameStateRaw();
+      if (raw === null) return;
+      onHydrate(raw, { perfNowMs: performance.now(), unixNowMs: Date.now() });
     };
 
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [dispatch, enabled]);
+  }, [enabled, onHydrate]);
 }
+
