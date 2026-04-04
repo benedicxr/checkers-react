@@ -10,13 +10,16 @@ function otherPlayer(p: Player): Player {
 }
 
 function pushUndoIfNeeded(state: GameState): GameState {
-  if (state.inTurnMove) return state;
+  if (state.controller.inTurnMove) return state;
   const entry: UndoEntry = {
-    turn: state.turn,
-    nextId: state.nextId,
-    board: cloneBoard(state.board),
+    turn: state.model.turn,
+    nextId: state.model.nextId,
+    board: cloneBoard(state.model.board),
   };
-  return { ...state, undo: [...state.undo, entry], inTurnMove: true };
+  return {
+    ...state,
+    controller: { ...state.controller, undo: [...state.controller.undo, entry], inTurnMove: true },
+  };
 }
 
 export function applyMove(state: GameState, chosen: CoreMove): GameState {
@@ -25,10 +28,17 @@ export function applyMove(state: GameState, chosen: CoreMove): GameState {
   const isCapture = chosen.type === "capture";
   next = {
     ...next,
-    history: appendStep(beginIfNeeded(next.history, next.turn, chosen.from, { isCapture }), chosen.to, { isCapture }),
+    controller: {
+      ...next.controller,
+      history: appendStep(
+        beginIfNeeded(next.controller.history, next.model.turn, chosen.from, { isCapture }),
+        chosen.to,
+        { isCapture },
+      ),
+    },
   };
 
-  const movedRes = movePiece(next.board, chosen.from, chosen.to);
+  const movedRes = movePiece(next.model.board, chosen.from, chosen.to);
   let board = movedRes.board;
   if (chosen.type === "capture") {
     board = removePiece(board, chosen.captured);
@@ -37,27 +47,27 @@ export function applyMove(state: GameState, chosen: CoreMove): GameState {
   board = setPiece(board, chosen.to, promoted);
 
   if (chosen.type === "capture") {
-    const moreCaptures = getCapturesForPiece(board, next.turn, chosen.to);
+    const moreCaptures = getCapturesForPiece(board, next.model.turn, chosen.to);
     if (moreCaptures.length > 0) {
       return {
         ...next,
-        board,
-        captureChainPiece: { ...chosen.to },
-        selected: { ...chosen.to },
+        model: { ...next.model, board, selected: { ...chosen.to } },
+        controller: { ...next.controller, captureChainPiece: { ...chosen.to } },
       };
     }
   }
 
-  const nextTurn = otherPlayer(next.turn);
+  const nextTurn = otherPlayer(next.model.turn);
 
   return {
     ...next,
-    board,
-    turn: nextTurn,
-    captureChainPiece: null,
-    selected: null,
-    inTurnMove: false,
-    history: finalizePending(next.history),
+    model: { ...next.model, board, turn: nextTurn, selected: null },
+    controller: {
+      ...next.controller,
+      captureChainPiece: null,
+      inTurnMove: false,
+      history: finalizePending(next.controller.history),
+    },
   };
 }
 

@@ -11,7 +11,7 @@ import type {
 import type { MoveHistoryEntry, PersistedPendingMove } from "../types";
 import type { MoveHistoryState } from "./moveHistory";
 import { createMoveHistoryState } from "./moveHistory";
-import type { GameState, UndoEntry } from "./gameReducer";
+import type { GameControllerState, GameModelState, GameState, UndoEntry } from "./gameReducer";
 import { createInitialGameState } from "./gameReducer";
 import { createTimerState, exportSerializableTimerState, importSerializableTimerState } from "./timerReducer";
 
@@ -51,15 +51,15 @@ function cloneBoard(board: SerializableBoardSnapshot): SerializableBoardSnapshot
   return board.map((row) => row.map((cell) => (cell ? { ...cell } : null)));
 }
 
-function exportPersistedModelState(game: GameState): PersistedModelState {
+function exportPersistedModelState(model: GameModelState): PersistedModelState {
   return {
-    turn: game.turn,
-    nextId: game.nextId,
-    board: cloneBoard(game.board),
+    turn: model.turn,
+    nextId: model.nextId,
+    board: cloneBoard(model.board),
   };
 }
 
-function importPersistedModelState(raw: unknown): Pick<GameState, "board" | "turn" | "nextId"> | null {
+function importPersistedModelState(raw: unknown): Pick<GameModelState, "board" | "turn" | "nextId"> | null {
   if (!raw || typeof raw !== "object") return null;
   const m = raw as Partial<PersistedModelState>;
   if (m.turn !== GAME_CONFIG.WHITE_PLAYER && m.turn !== GAME_CONFIG.BLACK_PLAYER) return null;
@@ -142,12 +142,13 @@ export function exportPersistedGameState({
   timer: TimerState;
   unixNowMs: number;
 }): PersistedGameState {
+  const controller: GameControllerState = game.controller;
   return {
     version: 2,
-    model: exportPersistedModelState(game),
+    model: exportPersistedModelState(game.model),
     controller: {
-      undo: exportPersistedUndo(game.undo),
-      history: exportPersistedHistory(game.history),
+      undo: exportPersistedUndo(controller.undo),
+      history: exportPersistedHistory(controller.history),
       timer: exportSerializableTimerState(timer, unixNowMs),
     },
   };
@@ -181,22 +182,28 @@ export function importPersistedGameState({
   const base = createInitialGameState();
   const game: GameState = {
     ...base,
-    board: importedModel.board,
-    turn: importedModel.turn,
-    nextId: importedModel.nextId,
-    selected: null,
-    captureChainPiece: null,
-    undo,
-    inTurnMove: false,
-    history,
+    model: {
+      ...base.model,
+      board: importedModel.board,
+      turn: importedModel.turn,
+      nextId: importedModel.nextId,
+      selected: null,
+    },
+    controller: {
+      ...base.controller,
+      captureChainPiece: null,
+      undo,
+      inTurnMove: false,
+      history,
+    },
   };
 
   const fallbackTimer = createTimerState({
     enabled: CLOCK_CONFIG.ENABLED,
     initialMs: CLOCK_CONFIG.INITIAL_TIME_MS,
     whiteMs: CLOCK_CONFIG.INITIAL_TIME_MS,
-    blackMs: CLOCK_CONFIG.INITIAL_TIME_MS,
-    activePlayer: game.turn,
+      blackMs: CLOCK_CONFIG.INITIAL_TIME_MS,
+    activePlayer: game.model.turn,
     running: CLOCK_CONFIG.ENABLED,
   });
   const timer =

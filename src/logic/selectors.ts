@@ -29,7 +29,7 @@ function getWinnerByTimer(timer: TimerState): Player | null {
 
 export function getWinner(state: GameState, timer: TimerState): Player | null {
   const timeWinner = timer.timeoutWinner ?? getWinnerByTimer(timer);
-  const boardWinner = getWinnerByBoard(state.board, state.turn);
+  const boardWinner = getWinnerByBoard(state.model.board, state.model.turn);
   return boardWinner ?? timeWinner;
 }
 
@@ -43,26 +43,26 @@ export function getValidMoves(
   capturableTargets: readonly Coords[];
   selected: Coords | null;
 } {
-  const captureChainPiece = state.captureChainPiece;
+  const captureChainPiece = state.controller.captureChainPiece;
 
   let mustCapture = false;
   if (captureChainPiece !== null) {
     mustCapture = true;
   } else if (winner === null) {
-    mustCapture = playerHasCapture(state.board, state.turn);
+    mustCapture = playerHasCapture(state.model.board, state.model.turn);
   }
 
-  const selected = captureChainPiece !== null ? captureChainPiece : state.selected;
+  const selected = captureChainPiece !== null ? captureChainPiece : state.model.selected;
 
   let availableMoves: readonly Move[] = EMPTY_MOVES;
   if (winner === null && selected) {
     if (captureChainPiece !== null) {
       availableMoves = coreMovesToUi(
-        getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly: true }),
+        getValidMovesForPiece(state.model.board, state.model.turn, selected, { capturesOnly: true }),
       );
     } else {
       availableMoves = coreMovesToUi(
-        getValidMovesForPiece(state.board, state.turn, selected, { capturesOnly: mustCapture }),
+        getValidMovesForPiece(state.model.board, state.model.turn, selected, { capturesOnly: mustCapture }),
       );
     }
   }
@@ -71,7 +71,7 @@ export function getValidMoves(
   if (winner !== null || captureChainPiece !== null) {
     capturingPieces = EMPTY_COORDS;
   } else if (mustCapture) {
-    capturingPieces = getCapturingPieces(state.board, state.turn);
+    capturingPieces = getCapturingPieces(state.model.board, state.model.turn);
   } else {
     capturingPieces = EMPTY_COORDS;
   }
@@ -96,8 +96,8 @@ export function getCapturedCounts(state: GameState): {
   capturedByWhite: number;
   capturedByBlack: number;
 } {
-  const currentWhite = countPieces(state.board as unknown as Board, GAME_CONFIG.WHITE_PLAYER);
-  const currentBlack = countPieces(state.board as unknown as Board, GAME_CONFIG.BLACK_PLAYER);
+  const currentWhite = countPieces(state.model.board as unknown as Board, GAME_CONFIG.WHITE_PLAYER);
+  const currentBlack = countPieces(state.model.board as unknown as Board, GAME_CONFIG.BLACK_PLAYER);
 
   const initialCount = GAME_RULES.INITIAL_PIECE_ROWS * (GAME_CONFIG.COLS / 2);
   const capturedByWhite = Math.max(0, initialCount - currentBlack);

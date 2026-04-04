@@ -87,6 +87,17 @@ export function useCheckers(clock: Clock = { now: () => performance.now() }) {
     onTick: (perfNowMs) => dispatchTimer({ type: "TICK", perfNowMs }),
   });
 
+  const timerStart = useCallback(() => dispatchTimer({ type: "START", perfNowMs: clock.now() }), [clock]);
+  const timerStop = useCallback(() => dispatchTimer({ type: "STOP", perfNowMs: clock.now() }), [clock]);
+  const timerSwitchPlayer = useCallback(
+    (nextPlayer: Player) => dispatchTimer({ type: "SWITCH_PLAYER", nextPlayer, perfNowMs: clock.now() }),
+    [clock],
+  );
+  const timerReset = useCallback(
+    (next: TimerClockSnapshot) => dispatchTimer({ type: "RESET", timer: next, perfNowMs: clock.now() }),
+    [clock],
+  );
+
   useEffect(() => {
     if (timer.timeoutWinner === null) return;
     bumpPersist();
@@ -99,23 +110,23 @@ export function useCheckers(clock: Clock = { now: () => performance.now() }) {
       return;
     }
     if (!timer.enabled) return;
-    if (timer.activePlayer === state.turn) return;
-    dispatchTimer({ type: "SWITCH_PLAYER", nextPlayer: state.turn, perfNowMs: clock.now() });
-  }, [state.turn, timer.activePlayer, timer.enabled, clock]);
+    if (timer.activePlayer === state.model.turn) return;
+    timerSwitchPlayer(state.model.turn);
+  }, [state.model.turn, timer.activePlayer, timer.enabled, timerSwitchPlayer]);
 
   useEffect(() => {
     if (!timer.enabled) return;
     const winner = getWinner(state, timer);
 
     if (winner !== null) {
-      if (timer.running) dispatchTimer({ type: "STOP", perfNowMs: clock.now() });
+      if (timer.running) timerStop();
       return;
     }
 
     if (!timer.running) {
-      dispatchTimer({ type: "START", perfNowMs: clock.now() });
+      timerStart();
     }
-  }, [state.board, state.turn, timer, timer.enabled, timer.running, timer.timeoutWinner, clock, state]);
+  }, [state, timer, timer.enabled, timer.running, timer.timeoutWinner, timerStart, timerStop]);
 
   const snapshot = useMemo((): CheckersSnapshot => {
     const winner = getWinner(state, timer);
@@ -125,22 +136,22 @@ export function useCheckers(clock: Clock = { now: () => performance.now() }) {
     );
     const { capturedByWhite, capturedByBlack } = getCapturedCounts(state);
 
-    const activeEntry = getActiveEntry(state.history);
-    const moves = state.history.entries.length === 0 ? EMPTY_RENDER_MOVES : getRenderList(state.history);
+    const activeEntry = getActiveEntry(state.controller.history);
+    const moves = state.controller.history.entries.length === 0 ? EMPTY_RENDER_MOVES : getRenderList(state.controller.history);
 
     return {
-      board: toBoardSnapshot(state.board),
-      turn: state.turn,
+      board: toBoardSnapshot(state.model.board),
+      turn: state.model.turn,
       winner,
       mustCapture,
-      captureChainPiece: state.captureChainPiece,
+      captureChainPiece: state.controller.captureChainPiece,
       selected,
       availableMoves,
       capturingPieces,
       capturableTargets,
       capturedByWhite,
       capturedByBlack,
-      canUndo: state.undo.length > 0,
+      canUndo: state.controller.undo.length > 0,
       clock: {
         enabled: timer.enabled,
         initialMs: timer.initialMs,
@@ -150,7 +161,7 @@ export function useCheckers(clock: Clock = { now: () => performance.now() }) {
         running: timer.running,
       },
       moves,
-      activeMoveId: state.history.activeId,
+      activeMoveId: state.controller.history.activeId,
       activeMovePath: activeEntry ? activeEntry.path : null,
     };
   }, [state, timer]);
@@ -171,16 +182,12 @@ export function useCheckers(clock: Clock = { now: () => performance.now() }) {
 
   const reset = useCallback(() => {
     dispatch({ type: "RESET" });
-    dispatchTimer({
-      type: "RESET",
-      timer: createDefaultTimerClockSnapshot(GAME_CONFIG.WHITE_PLAYER),
-      perfNowMs: clock.now(),
-    });
+    timerReset(createDefaultTimerClockSnapshot(GAME_CONFIG.WHITE_PLAYER));
     bumpPersist();
-  }, [clock]);
+  }, [timerReset]);
 
   const undo = useCallback((): boolean => {
-    if (stateRef.current.undo.length === 0) return false;
+    if (stateRef.current.controller.undo.length === 0) return false;
     dispatch({ type: "UNDO" });
     bumpPersist();
     return true;

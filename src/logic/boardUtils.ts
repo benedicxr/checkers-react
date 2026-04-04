@@ -58,7 +58,7 @@ export function createPiece(color: Color, id: number): Piece {
   return { id, color, isKing: false };
 }
 
-export function createInitialBoard(): { board: Board; nextId: number; initialWhite: number; initialBlack: number } {
+export function createInitialBoard(): { board: Board; nextId: number } {
   const board = createEmptyBoard();
   let nextId = 1;
 
@@ -73,9 +73,7 @@ export function createInitialBoard(): { board: Board; nextId: number; initialWhi
     }
   }
 
-  const initialWhite = countPieces(board, GAME_CONFIG.WHITE_PLAYER);
-  const initialBlack = countPieces(board, GAME_CONFIG.BLACK_PLAYER);
-  return { board, nextId, initialWhite, initialBlack };
+  return { board, nextId };
 }
 
 export function countPieces(board: Board, player: Color): number {
