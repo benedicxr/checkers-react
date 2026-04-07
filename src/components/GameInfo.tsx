@@ -17,11 +17,21 @@ export const GameInfo = memo(function GameInfo({
   capturedByBlack: number;
   winner: Player | null;
 }) {
-  const isWinner = winner !== null;
+  if (winner !== null) {
+    return (
+      <div className="turn winner">
+        Game over: {playerLabel(winner)} wins{" "}
+        <span style={{ color: "var(--muted)", fontWeight: 600 }}>
+          {" "}
+          Captured: White {capturedByWhite}, Black {capturedByBlack}
+        </span>
+      </div>
+    );
+  }
 
   return (
-    <div className={["turn", isWinner ? "winner" : null].filter(Boolean).join(" ")}>
-      {isWinner ? `Game over: ${playerLabel(winner!)} wins` : `Turn: ${playerLabel(turn)}`}{" "}
+    <div className="turn">
+      Turn: {playerLabel(turn)}{" "}
       <span style={{ color: "var(--muted)", fontWeight: 600 }}>
         {" "}
         Captured: White {capturedByWhite}, Black {capturedByBlack}

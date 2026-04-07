@@ -14,6 +14,7 @@ import { createMoveHistoryState } from "./moveHistory";
 import type { GameControllerState, GameModelState, GameState, UndoEntry } from "./gameReducer";
 import { createInitialGameState } from "./gameReducer";
 import { createTimerState, exportSerializableTimerState, importSerializableTimerState } from "./timerReducer";
+import {cloneBoard} from "./boardUtils.ts";
 
 function isValidCoords(x: unknown): x is Coords {
   if (!x || typeof x !== "object") return false;
@@ -47,9 +48,7 @@ function isValidBoardSnapshot(board: unknown): board is SerializableBoardSnapsho
   return true;
 }
 
-function cloneBoard(board: SerializableBoardSnapshot): SerializableBoardSnapshot {
-  return board.map((row) => row.map((cell) => (cell ? { ...cell } : null)));
-}
+
 
 function exportPersistedModelState(model: GameModelState): PersistedModelState {
   return {

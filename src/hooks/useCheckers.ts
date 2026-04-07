@@ -32,7 +32,7 @@ type CheckersSnapshot = Readonly<{
 const EMPTY_RENDER_MOVES: ReadonlyArray<{ id: number; text: string }> = [];
 
 function toBoardSnapshot(board: Board): BoardSnapshot {
-  return board as unknown as BoardSnapshot;
+  return board;
 }
 
 function createDefaultTimerClockSnapshot(activePlayer: Player): TimerClockSnapshot {
@@ -48,6 +48,10 @@ function createDefaultTimerClockSnapshot(activePlayer: Player): TimerClockSnapsh
 }
 
 export function useCheckers(clock: Clock = { now: () => performance.now() }) {
+  /* Counter-based persistence trigger: Increment only on meaningful state changes
+  (moves, resets, undos, timeouts), not on every render. This prevents unnecessary
+  saves on frequent updates (timer ticks), improving performance and reducing
+  localStorage write thrashing while ensuring game state is persisted for actual decisions. */
   const [persistRev, bumpPersist] = useReducer((x: number) => x + 1, 0);
 
   const [state, dispatch] = useReducer(gameReducer, undefined, createInitialGameState);

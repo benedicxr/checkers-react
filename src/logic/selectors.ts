@@ -1,5 +1,5 @@
 import { GAME_CONFIG, GAME_RULES } from "../constants";
-import type { Coords, Move, Player, Board } from "../types";
+import type { Coords, Move, Player } from "../types";
 import type { TimerState } from "../types/timer";
 import {
   getCapturingPieces,
@@ -96,8 +96,8 @@ export function getCapturedCounts(state: GameState): {
   capturedByWhite: number;
   capturedByBlack: number;
 } {
-  const currentWhite = countPieces(state.model.board as unknown as Board, GAME_CONFIG.WHITE_PLAYER);
-  const currentBlack = countPieces(state.model.board as unknown as Board, GAME_CONFIG.BLACK_PLAYER);
+  const currentWhite = countPieces(state.model.board, GAME_CONFIG.WHITE_PLAYER);
+  const currentBlack = countPieces(state.model.board, GAME_CONFIG.BLACK_PLAYER);
 
   const initialCount = GAME_RULES.INITIAL_PIECE_ROWS * (GAME_CONFIG.COLS / 2);
   const capturedByWhite = Math.max(0, initialCount - currentBlack);
