@@ -27,6 +27,7 @@
 
     --accent: #f2c14e;
     --danger: #b61d25;
+    --danger-rgb: 182 29 37;
     --text: rgba(37, 22, 14, 0.92);
     --muted: rgba(37, 22, 14, 0.66);
 }
@@ -94,6 +95,18 @@ body {
 .turn {
     font-size: 13px;
     color: var(--muted);
+}
+
+.error-banner {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid rgb(var(--danger-rgb) / 0.34);
+    background: rgb(var(--danger-rgb) / 0.10);
+    color: rgb(var(--danger-rgb) / 0.92);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
 }
 
 .turn.winner {

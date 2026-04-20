@@ -93,4 +93,3 @@ function coordToAlg(p: Coords): string {
 function formatMove(path: Coords[]): string {
   return path.map((p) => coordToAlg(p)).join("-");
 }
-
