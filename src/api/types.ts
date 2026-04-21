@@ -8,9 +8,9 @@ export type ApiPos = Readonly<{
 export type ApiGame = Readonly<{
   id: ApiGameId;
   board: unknown;
-  currentTurn: number;
+  currentTurn: "white" | "black";
   status: string;
-  winner: number | null;
+  winner: "white" | "black" | null;
   moveCount: number;
   createdAt: string;
   updatedAt: string;
@@ -18,7 +18,7 @@ export type ApiGame = Readonly<{
 
 export type ApiMoveHistoryItem = Readonly<{
   id: number;
-  playerSide: number;
+  playerSide: "white" | "black";
   fromPos: ApiPos;
   toPos: ApiPos;
   isJump: boolean;
