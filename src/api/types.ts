@@ -5,9 +5,17 @@ export type ApiPos = Readonly<{
   col: number;
 }>;
 
+export type BackendPiece = Readonly<{
+  id: number;
+  color: "white" | "black";
+  isKing: boolean;
+}>;
+
+export type BackendBoard = ReadonlyArray<ReadonlyArray<BackendPiece | null>>;
+
 export type ApiGame = Readonly<{
   id: ApiGameId;
-  board: unknown;
+  board: BackendBoard;
   currentTurn: "white" | "black";
   status: string;
   winner: "white" | "black" | null;

@@ -4,19 +4,13 @@ import type { Board, BoardSnapshot, CheckerSnapshot, Coords, Move, Player, Timer
 import { countPieces, getPiece } from "../logic/boardUtils";
 import { getCapturesForPiece, getCapturingPieces, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
 import type { CoreMove } from "../types";
-import type { ApiGame, ApiGameId, ApiMoveHistoryItem } from "../api/types";
+import type { ApiGame, ApiGameId, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
 import { createGame, getGame, getMoves, makeMove, restartGame, undoMove } from "../api/games";
 import { ApiClientError } from "../api/client";
 
 type RenderMove = Readonly<{ id: number; text: string }>;
 
-type BackendPiece = Readonly<{
-  id: number;
-  color: "white" | "black";
-  isKing: boolean;
-}>;
 
-type BackendBoard = ReadonlyArray<ReadonlyArray<BackendPiece | null>>;
 
 export type CheckersSnapshot = Readonly<{
   gameId: ApiGameId | null;
@@ -173,9 +167,8 @@ export function useCheckers() {
   const didHydrateRef = useRef(false);
 
   const board = useMemo((): BoardSnapshot => {
-    const raw = game?.board as unknown;
-    if (!raw) return Object.freeze([]) as unknown as BoardSnapshot;
-    return mapBoard(raw as BackendBoard);
+    if (!game?.board) return Object.freeze([]) as unknown as BoardSnapshot;
+    return mapBoard(game.board);
   }, [game?.board]);
 
   const turn = useMemo((): Player => {
