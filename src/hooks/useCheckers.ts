@@ -4,7 +4,7 @@ import type { Board, BoardSnapshot, CheckerSnapshot, Coords, Move, Player, Timer
 import { countPieces, getPiece } from "../logic/boardUtils";
 import { getCapturesForPiece, getCapturingPieces, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
 import type { CoreMove } from "../types";
-import type { ApiGame, ApiGameId, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
+import type { ApiAllowedMove, ApiGame, ApiGameId, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
 import { createGame, getGame, getMoves, makeMove, restartGame, undoMove } from "../api/games";
 import { ApiClientError } from "../api/client";
 
@@ -119,6 +119,26 @@ function coreMovesToUi(moves: CoreMove[]): Move[] {
   });
 }
 
+function isBackendCaptureMove(m: ApiAllowedMove): boolean {
+  return Boolean(m.isCapture ?? m.isJump);
+}
+
+function backendAllowedMoveToUi(m: ApiAllowedMove): Move | null {
+  if (!isBackendCaptureMove(m)) return { r: m.toPos.row, c: m.toPos.col, type: "move" as const };
+  const cap = m.capturedPos ?? null;
+  if (!cap) return null;
+  return { r: m.toPos.row, c: m.toPos.col, type: "jump" as const, target: { r: cap.row, c: cap.col } };
+}
+
+function moveKey(from: Coords, to: Coords, captured: Coords | null): string {
+  if (!captured) return `${from.r},${from.c}->${to.r},${to.c}`;
+  return `${from.r},${from.c}->${to.r},${to.c}|x:${captured.r},${captured.c}`;
+}
+
+function sameCoordsApi(a: Coords, b: { row: number; col: number }): boolean {
+  return a.r === b.row && a.c === b.col;
+}
+
 function sameCoords(a: Coords | null, b: Coords | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
@@ -152,6 +172,15 @@ function toUserMessage(e: unknown): string {
   return "Unexpected error";
 }
 
+function extractGameFromError(e: unknown): ApiGame | null {
+  if (!(e instanceof ApiClientError)) return null;
+  const p = e.payload;
+  if (!p || typeof p !== "object") return null;
+  const maybe = (p as { game?: unknown }).game;
+  if (!maybe || typeof maybe !== "object") return null;
+  return maybe as ApiGame;
+}
+
 export function useCheckers() {
   const [gameId, setGameId] = useState<ApiGameId | null>(() => readInitialGameId());
   const [game, setGame] = useState<ApiGame | null>(null);
@@ -180,26 +209,125 @@ export function useCheckers() {
     return mapPlayerSide(game.winner) ?? null;
   }, [game]);
 
-  const mustCapture = useMemo(() => {
+  const serverAllowedMoves = useMemo((): readonly ApiAllowedMove[] | null => {
+    const ms = game?.allowedMoves;
+    return Array.isArray(ms) ? ms : null;
+  }, [game?.allowedMoves]);
+
+  const localMustCapture = useMemo(() => {
     if (!game) return false;
     if (winner !== null) return false;
     return playerHasCapture(board as Board, turn);
   }, [board, game, turn, winner]);
 
+  const serverMustCapture = useMemo((): boolean | null => {
+    if (!game) return null;
+    if (winner !== null) return null;
+    if (!serverAllowedMoves) return null;
+    return serverAllowedMoves.some(isBackendCaptureMove);
+  }, [game, serverAllowedMoves, winner]);
+
+  const mustCapture = serverMustCapture ?? localMustCapture;
+
   const availableMoves = useMemo((): readonly Move[] => {
     if (!game) return EMPTY_MOVES;
     if (winner !== null) return EMPTY_MOVES;
     if (!selected) return EMPTY_MOVES;
+
+    if (serverAllowedMoves) {
+      const ui: Move[] = [];
+      for (const m of serverAllowedMoves) {
+        if (m.fromPos.row !== selected.r || m.fromPos.col !== selected.c) continue;
+        const converted = backendAllowedMoveToUi(m);
+        if (converted) ui.push(converted);
+      }
+      return ui;
+    }
+
     const core = getValidMovesForPiece(board as Board, turn, selected, { capturesOnly: mustCapture });
     return coreMovesToUi(core);
-  }, [board, game, mustCapture, selected, turn, winner]);
+  }, [board, game, mustCapture, selected, serverAllowedMoves, turn, winner]);
 
   const capturingPieces = useMemo((): readonly Coords[] => {
     if (!game) return EMPTY_COORDS;
     if (winner !== null) return EMPTY_COORDS;
     if (!mustCapture) return EMPTY_COORDS;
+
+    if (serverAllowedMoves) {
+      const captureMoves = serverAllowedMoves.filter(isBackendCaptureMove);
+      if (captureMoves.length === 0) return EMPTY_COORDS;
+
+      const seen = new Set<string>();
+      const out: Coords[] = [];
+      for (const m of captureMoves) {
+        const key = `${m.fromPos.row},${m.fromPos.col}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ r: m.fromPos.row, c: m.fromPos.col });
+      }
+      out.sort((a, b) => (a.r - b.r) || (a.c - b.c));
+      return out;
+    }
+
     return getCapturingPieces(board as Board, turn);
-  }, [board, game, mustCapture, turn, winner]);
+  }, [board, game, mustCapture, serverAllowedMoves, turn, winner]);
+
+  const lastRulesDriftRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (!game) return;
+    if (winner !== null) return;
+    if (!serverAllowedMoves) return;
+
+    const serverSet = new Set<string>();
+    for (const m of serverAllowedMoves) {
+      const from: Coords = { r: m.fromPos.row, c: m.fromPos.col };
+      const to: Coords = { r: m.toPos.row, c: m.toPos.col };
+      const captured = isBackendCaptureMove(m) && m.capturedPos
+        ? { r: m.capturedPos.row, c: m.capturedPos.col }
+        : null;
+      serverSet.add(moveKey(from, to, captured));
+    }
+
+    const localSet = new Set<string>();
+    const b = board as Board;
+    for (let r = 0; r < GAME_CONFIG.ROWS; r++) {
+      for (let c = 0; c < GAME_CONFIG.COLS; c++) {
+        const p = b[r]![c]!;
+        if (!p || p.color !== turn) continue;
+        const core = getValidMovesForPiece(b, turn, { r, c }, { capturesOnly: localMustCapture });
+        for (const m of core) {
+          if (m.type === "simple") localSet.add(moveKey(m.from, m.to, null));
+          else localSet.add(moveKey(m.from, m.to, m.captured));
+        }
+      }
+    }
+
+    const onlyInServer: string[] = [];
+    const onlyInLocal: string[] = [];
+    for (const k of serverSet) if (!localSet.has(k)) onlyInServer.push(k);
+    for (const k of localSet) if (!serverSet.has(k)) onlyInLocal.push(k);
+
+    if (onlyInServer.length === 0 && onlyInLocal.length === 0) {
+      lastRulesDriftRef.current = null;
+      return;
+    }
+
+    const signature = `${String(game.id)}:${game.moveCount}:${turn}:${localMustCapture}:${serverSet.size}:${localSet.size}:${onlyInServer.length}:${onlyInLocal.length}`;
+    if (lastRulesDriftRef.current === signature) return;
+    lastRulesDriftRef.current = signature;
+
+    console.warn("[checkers] Rules drift detected: backend allowedMoves != client gameRules", {
+      gameId: game.id,
+      moveCount: game.moveCount,
+      turn,
+      localMustCapture,
+      serverAllowedMoves: Array.from(serverSet),
+      localAllowedMoves: Array.from(localSet),
+      onlyInServer: onlyInServer.slice(0, 12),
+      onlyInLocal: onlyInLocal.slice(0, 12),
+    });
+  }, [board, game, localMustCapture, serverAllowedMoves, turn, winner]);
 
   const { capturedByWhite, capturedByBlack } = useMemo(() => {
     if (!game) return { capturedByWhite: 0, capturedByBlack: 0 };
@@ -315,6 +443,12 @@ export function useCheckers() {
         await refresh(gameId);
       } catch (e) {
         if (seq !== reqSeq.current) return;
+        const nextGame = extractGameFromError(e);
+        if (nextGame) {
+          setGame(nextGame);
+          setSelected(null);
+          setActiveMoveId(null);
+        }
         setError(toUserMessage(e));
         setLoading(false);
       }
@@ -352,9 +486,22 @@ export function useCheckers() {
       const b = board as Board;
 
       if (selected) {
-        const coreMoves = getValidMovesForPiece(b, turn, selected, { capturesOnly: mustCapture });
-        const chosen = coreMoves.find((m) => m.to.r === at.r && m.to.c === at.c);
-        if (chosen) {
+        const serverChosen = serverAllowedMoves
+          ? serverAllowedMoves.find(
+              (m) =>
+                sameCoordsApi(selected, m.fromPos) &&
+                m.toPos.row === at.r &&
+                m.toPos.col === at.c,
+            )
+          : null;
+
+        const localChosen = !serverAllowedMoves
+          ? getValidMovesForPiece(b, turn, selected, { capturesOnly: mustCapture }).find(
+              (m) => m.to.r === at.r && m.to.c === at.c,
+            )
+          : null;
+
+        if (serverChosen || localChosen) {
           const seq = ++reqSeq.current;
           setLoading(true);
           try {
@@ -365,6 +512,12 @@ export function useCheckers() {
             await refresh(gameId);
           } catch (e) {
             if (seq !== reqSeq.current) return;
+            const nextGame = extractGameFromError(e);
+            if (nextGame) {
+              setGame(nextGame);
+              setSelected(null);
+              setActiveMoveId(null);
+            }
             setError(toUserMessage(e));
             setLoading(false);
           }
@@ -384,14 +537,21 @@ export function useCheckers() {
       }
 
       if (mustCapture) {
-        const captures = getCapturesForPiece(b, turn, at);
-        if (captures.length === 0) return;
+        if (serverAllowedMoves) {
+          const canCapture = serverAllowedMoves.some(
+            (m) => isBackendCaptureMove(m) && sameCoordsApi(at, m.fromPos),
+          );
+          if (!canCapture) return;
+        } else {
+          const captures = getCapturesForPiece(b, turn, at);
+          if (captures.length === 0) return;
+        }
       }
 
       setSelected({ ...at });
       setActiveMoveId(null);
     },
-    [board, game, gameId, loading, mustCapture, refresh, selected, turn, winner],
+    [board, game, gameId, loading, mustCapture, refresh, selected, serverAllowedMoves, turn, winner],
   );
 
   const setActiveMove = useCallback((id: number | null) => {

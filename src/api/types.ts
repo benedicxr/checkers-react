@@ -5,6 +5,14 @@ export type ApiPos = Readonly<{
   col: number;
 }>;
 
+export type ApiAllowedMove = Readonly<{
+  fromPos: ApiPos;
+  toPos: ApiPos;
+  isCapture?: boolean;
+  isJump?: boolean;
+  capturedPos?: ApiPos | null;
+}>;
+
 export type BackendPiece = Readonly<{
   id: number;
   color: "white" | "black";
@@ -20,6 +28,7 @@ export type ApiGame = Readonly<{
   status: string;
   winner: "white" | "black" | null;
   moveCount: number;
+  allowedMoves?: ReadonlyArray<ApiAllowedMove>;
   capturedByWhite?: number;
   capturedByBlack?: number;
   createdAt: string;
