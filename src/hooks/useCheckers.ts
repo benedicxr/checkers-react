@@ -295,41 +295,34 @@ export function useCheckers() {
     }
   }, [fetchGameAndMoves]);
 
+  const runMutation = useCallback(
+    async (apiCall: (id: ApiGameId) => Promise<unknown>) => {
+      if (!gameId) return;
+      const seq = ++reqSeq.current;
+      setLoading(true);
+      setError(null);
+      try {
+        await apiCall(gameId);
+        if (seq !== reqSeq.current) return;
+        setSelected(null);
+        setActiveMoveId(null);
+        await refresh(gameId);
+      } catch (e) {
+        if (seq !== reqSeq.current) return;
+        setError(toUserMessage(e));
+        setLoading(false);
+      }
+    },
+    [gameId, refresh],
+  );
+
   const undo = useCallback(async () => {
-    if (!gameId) return;
-    const seq = ++reqSeq.current;
-    setLoading(true);
-    setError(null);
-    try {
-      await undoMove(gameId);
-      if (seq !== reqSeq.current) return;
-      setSelected(null);
-      setActiveMoveId(null);
-      await refresh(gameId);
-    } catch (e) {
-      if (seq !== reqSeq.current) return;
-      setError(toUserMessage(e));
-      setLoading(false);
-    }
-  }, [gameId, refresh]);
+    await runMutation(undoMove);
+  }, [runMutation]);
 
   const restart = useCallback(async () => {
-    if (!gameId) return;
-    const seq = ++reqSeq.current;
-    setLoading(true);
-    setError(null);
-    try {
-      await restartGame(gameId);
-      if (seq !== reqSeq.current) return;
-      setSelected(null);
-      setActiveMoveId(null);
-      await refresh(gameId);
-    } catch (e) {
-      if (seq !== reqSeq.current) return;
-      setError(toUserMessage(e));
-      setLoading(false);
-    }
-  }, [gameId, refresh]);
+    await runMutation(restartGame);
+  }, [runMutation]);
 
   useEffect(() => {
     if (didHydrateRef.current) return;
