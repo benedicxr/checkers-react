@@ -20,6 +20,8 @@ export type ApiGame = Readonly<{
   status: string;
   winner: "white" | "black" | null;
   moveCount: number;
+  capturedByWhite?: number;
+  capturedByBlack?: number;
   createdAt: string;
   updatedAt: string;
 }>;

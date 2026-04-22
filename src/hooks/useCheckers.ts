@@ -203,6 +203,12 @@ export function useCheckers() {
 
   const { capturedByWhite, capturedByBlack } = useMemo(() => {
     if (!game) return { capturedByWhite: 0, capturedByBlack: 0 };
+    if (Number.isFinite(game.capturedByWhite) && Number.isFinite(game.capturedByBlack)) {
+      return {
+        capturedByWhite: game.capturedByWhite as number,
+        capturedByBlack: game.capturedByBlack as number,
+      };
+    }
     const b = board as Board;
     const currentWhite = countPieces(b, GAME_CONFIG.WHITE_PLAYER);
     const currentBlack = countPieces(b, GAME_CONFIG.BLACK_PLAYER);
