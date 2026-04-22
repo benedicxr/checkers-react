@@ -224,25 +224,39 @@ export function useCheckers() {
     return m ? backendMoveToPath(m) : null;
   }, [activeMoveId, history]);
 
+  const fetchGameAndMoves = useCallback(
+    async (id: ApiGameId): Promise<{ game: ApiGame; moves: ApiMoveHistoryItem[] } | null> => {
+      const seq = reqSeq.current;
+
+      const game = await getGame(id);
+      if (seq !== reqSeq.current) return null;
+
+      let moves: ApiMoveHistoryItem[] = [];
+      try {
+        moves = await getMoves(id);
+      } catch (e) {
+        if (!(e instanceof ApiClientError && e.status === 404)) throw e;
+        moves = [];
+      }
+
+      if (seq !== reqSeq.current) return null;
+      return { game, moves };
+    },
+    [],
+  );
+
   const refresh = useCallback(async (id: ApiGameId) => {
     const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
     try {
-      const g = await getGame(id);
-      let m: ApiMoveHistoryItem[] = [];
-      try {
-        m = await getMoves(id);
-      } catch (e) {
-        if (!(e instanceof ApiClientError && e.status === 404)) throw e;
-        m = [];
-      }
+      const res = await fetchGameAndMoves(id);
+      if (!res) return;
 
-      if (seq !== reqSeq.current) return;
       writeStoredGameId(id);
       setGameId(id);
-      setGame(g);
-      setHistory(m);
+      setGame(res.game);
+      setHistory(res.moves);
     } catch (e) {
       if (seq !== reqSeq.current) return;
       if (e instanceof ApiClientError && e.status === 404) {
@@ -255,7 +269,7 @@ export function useCheckers() {
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, []);
+  }, [fetchGameAndMoves]);
 
   const reset = useCallback(async () => {
     const seq = ++reqSeq.current;
@@ -268,26 +282,18 @@ export function useCheckers() {
       if (seq !== reqSeq.current) return;
       writeStoredGameId(created.id);
 
-      const g = await getGame(created.id);
-      let m: ApiMoveHistoryItem[] = [];
-      try {
-        m = await getMoves(created.id);
-      } catch (e) {
-        if (!(e instanceof ApiClientError && e.status === 404)) throw e;
-        m = [];
-      }
-
-      if (seq !== reqSeq.current) return;
+      const res = await fetchGameAndMoves(created.id);
+      if (!res) return;
       setGameId(created.id);
-      setGame(g);
-      setHistory(m);
+      setGame(res.game);
+      setHistory(res.moves);
     } catch (e) {
       if (seq !== reqSeq.current) return;
       setError(toUserMessage(e));
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, []);
+  }, [fetchGameAndMoves]);
 
   const undo = useCallback(async () => {
     if (!gameId) return;
