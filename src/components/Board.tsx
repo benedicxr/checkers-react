@@ -12,6 +12,12 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function nextFrame() {
+  return new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 function getPieceAt(board: BoardSnapshot, pos: Coords | null | undefined) {
   if (!pos) return null;
   return board[pos.r]?.[pos.c] ?? null;
@@ -52,7 +58,6 @@ export const Board = memo(function Board({
 
   const boardRef = useRef(board);
   const latestMoveIdRef = useRef<number | null>(latestMoveId);
-  const previewMoveIdRef = useRef<number | null>(previewMoveId);
   const animatedPreviewMoveIdRef = useRef<number | null>(null);
   const animatedMoveIdRef = useRef<number | null>(null);
   const animationSeqRef = useRef(0);
@@ -63,7 +68,6 @@ export const Board = memo(function Board({
     const prevLatestMoveId = latestMoveIdRef.current;
     boardRef.current = board;
     latestMoveIdRef.current = latestMoveId;
-    previewMoveIdRef.current = previewMoveId;
 
     const scheduleStateUpdate = (fn: () => void) => {
       if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
@@ -156,6 +160,9 @@ export const Board = memo(function Board({
     });
 
     void (async () => {
+      await nextFrame();
+      if (animationSeqRef.current !== seq) return;
+
       for (let i = 1; i < movePath.length; i++) {
         if (animationSeqRef.current !== seq) return;
         const nextPos = movePath[i]!;
