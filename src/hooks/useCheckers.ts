@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { GAME_CONFIG, GAME_RULES } from "../constants";
+import { GAME_CONFIG, GAME_RULES, MOVE_ANIMATION_STEP_MS } from "../constants";
 import type { Board, BoardSnapshot, CheckerSnapshot, Coords, Move, Player, TimerClockSnapshot } from "../types";
-import { countPieces, getPiece } from "../logic/boardUtils";
+import { cloneBoard, countPieces, getPiece, maybePromote, movePiece, removePiece, setPiece } from "../logic/boardUtils";
 import { getCapturesForPiece, getCapturingPieces, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
 import type { CoreMove } from "../types";
 import type { ApiAllowedMove, ApiGame, ApiGameId, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
@@ -9,6 +9,17 @@ import { createGame, getGame, getMoves, makeMove, restartGame, undoMove } from "
 import { ApiClientError } from "../api/client";
 
 type RenderMove = Readonly<{ id: number; text: string }>;
+type PendingPreviewMove = Readonly<{
+  id: number;
+  path: readonly Coords[];
+  capturedPositions: readonly Coords[];
+}>;
+type OptimisticState = Readonly<{
+  board: BoardSnapshot;
+  turn: Player;
+  capturedByWhite: number;
+  capturedByBlack: number;
+}>;
 
 
 
@@ -30,6 +41,12 @@ export type CheckersSnapshot = Readonly<{
   moves: ReadonlyArray<RenderMove>;
   activeMoveId: number | null;
   activeMovePath: readonly Coords[] | null;
+  previewMoveId: number | null;
+  previewMovePath: readonly Coords[] | null;
+  previewMoveCapturedPositions: readonly Coords[];
+  latestMoveId: number | null;
+  latestMovePath: readonly Coords[] | null;
+  latestMoveCapturedPositions: readonly Coords[];
   clock: TimerClockSnapshot;
 }>;
 
@@ -161,10 +178,62 @@ function backendMoveToRenderText(m: ApiMoveHistoryItem): string {
 }
 
 function backendMoveToPath(m: ApiMoveHistoryItem): Coords[] {
+  if (Array.isArray(m.path) && m.path.length > 0) {
+    return m.path.map((pos) => ({ r: pos.row, c: pos.col }));
+  }
   const path: Coords[] = [{ r: m.fromPos.row, c: m.fromPos.col }];
   if (m.capturedPos) path.push({ r: m.capturedPos.row, c: m.capturedPos.col });
   path.push({ r: m.toPos.row, c: m.toPos.col });
   return path;
+}
+
+function backendMoveToCapturedPositions(m: ApiMoveHistoryItem): Coords[] {
+  if (Array.isArray(m.capturedPositions) && m.capturedPositions.length > 0) {
+    return m.capturedPositions.map((pos) => ({ r: pos.row, c: pos.col }));
+  }
+  if (!m.capturedPos) return [];
+  return [{ r: m.capturedPos.row, c: m.capturedPos.col }];
+}
+
+function backendAllowedMoveToPath(m: ApiAllowedMove): Coords[] {
+  if (Array.isArray(m.path) && m.path.length > 0) {
+    return m.path.map((pos) => ({ r: pos.row, c: pos.col }));
+  }
+  return [
+    { r: m.fromPos.row, c: m.fromPos.col },
+    { r: m.toPos.row, c: m.toPos.col },
+  ];
+}
+
+function backendAllowedMoveToCapturedPositions(m: ApiAllowedMove): Coords[] {
+  if (Array.isArray(m.capturedPositions) && m.capturedPositions.length > 0) {
+    return m.capturedPositions.map((pos) => ({ r: pos.row, c: pos.col }));
+  }
+  if (!m.capturedPos) return [];
+  return [{ r: m.capturedPos.row, c: m.capturedPos.col }];
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function otherPlayer(p: Player): Player {
+  return p === GAME_CONFIG.WHITE_PLAYER ? GAME_CONFIG.BLACK_PLAYER : GAME_CONFIG.WHITE_PLAYER;
+}
+
+function applyOptimisticMove(
+  board: Board,
+  from: Coords,
+  to: Coords,
+  capturedPositions: readonly Coords[],
+): BoardSnapshot {
+  let next = cloneBoard(board);
+  const movedRes = movePiece(next, from, to);
+  next = movedRes.board;
+  for (const captured of capturedPositions) next = removePiece(next, captured);
+  const promoted = maybePromote(movedRes.moved, to.r);
+  next = setPiece(next, to, promoted);
+  return next;
 }
 
 function toUserMessage(e: unknown): string {
@@ -189,21 +258,26 @@ export function useCheckers() {
 
   const [selected, setSelected] = useState<Coords | null>(null);
   const [activeMoveId, setActiveMoveId] = useState<number | null>(null);
+  const [previewMove, setPreviewMove] = useState<PendingPreviewMove | null>(null);
+  const [optimisticState, setOptimisticState] = useState<OptimisticState | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reqSeq = useRef(0);
   const didHydrateRef = useRef(false);
+  const previewSeq = useRef(0);
 
   const board = useMemo((): BoardSnapshot => {
+    if (optimisticState) return optimisticState.board;
     if (!game?.board) return Object.freeze([]) as unknown as BoardSnapshot;
     return mapBoard(game.board);
-  }, [game?.board]);
+  }, [game?.board, optimisticState]);
 
   const turn = useMemo((): Player => {
+    if (optimisticState) return optimisticState.turn;
     return mapPlayerSide(game?.currentTurn) ?? GAME_CONFIG.WHITE_PLAYER;
-  }, [game?.currentTurn]);
+  }, [game?.currentTurn, optimisticState]);
 
   const winner = useMemo((): Player | null => {
     if (!game) return null;
@@ -212,15 +286,17 @@ export function useCheckers() {
 
   const isBoardInteractive = useMemo(() => {
     if (!gameId || !game) return false;
+    if (optimisticState) return false;
     if (loading) return false;
     if (winner !== null) return false;
     return turn === GAME_CONFIG.WHITE_PLAYER;
-  }, [game, gameId, loading, turn, winner]);
+  }, [game, gameId, loading, optimisticState, turn, winner]);
 
   const serverAllowedMoves = useMemo((): readonly ApiAllowedMove[] | null => {
+    if (optimisticState) return null;
     const ms = game?.allowedMoves;
     return Array.isArray(ms) ? ms : null;
-  }, [game?.allowedMoves]);
+  }, [game?.allowedMoves, optimisticState]);
 
   const localMustCapture = useMemo(() => {
     if (!game) return false;
@@ -338,6 +414,12 @@ export function useCheckers() {
   }, [board, game, localMustCapture, serverAllowedMoves, turn, winner]);
 
   const { capturedByWhite, capturedByBlack } = useMemo(() => {
+    if (optimisticState) {
+      return {
+        capturedByWhite: optimisticState.capturedByWhite,
+        capturedByBlack: optimisticState.capturedByBlack,
+      };
+    }
     if (!game) return { capturedByWhite: 0, capturedByBlack: 0 };
     if (Number.isFinite(game.capturedByWhite) && Number.isFinite(game.capturedByBlack)) {
       return {
@@ -353,7 +435,7 @@ export function useCheckers() {
       capturedByWhite: Math.max(0, initialCount - currentBlack),
       capturedByBlack: Math.max(0, initialCount - currentWhite),
     };
-  }, [board, game]);
+  }, [board, game, optimisticState]);
 
   const moves = useMemo((): ReadonlyArray<RenderMove> => {
     if (history.length === 0) return EMPTY_RENDER_MOVES;
@@ -365,6 +447,16 @@ export function useCheckers() {
     const m = history.find((x) => x.id === activeMoveId);
     return m ? backendMoveToPath(m) : null;
   }, [activeMoveId, history]);
+
+  const latestMove = history.length > 0 ? history[history.length - 1] : null;
+
+  const latestMovePath = useMemo((): readonly Coords[] | null => {
+    return latestMove ? backendMoveToPath(latestMove) : null;
+  }, [latestMove]);
+
+  const latestMoveCapturedPositions = useMemo((): readonly Coords[] => {
+    return latestMove ? backendMoveToCapturedPositions(latestMove) : EMPTY_COORDS;
+  }, [latestMove]);
 
   const fetchGameAndMoves = useCallback(
     async (id: ApiGameId): Promise<{ game: ApiGame; moves: ApiMoveHistoryItem[] } | null> => {
@@ -397,6 +489,8 @@ export function useCheckers() {
 
       writeStoredGameId(id);
       setGameId(id);
+      setOptimisticState(null);
+      setPreviewMove(null);
       setGame(res.game);
       setHistory(res.moves);
     } catch (e) {
@@ -407,6 +501,8 @@ export function useCheckers() {
         setGame(null);
         setHistory([]);
       }
+      setOptimisticState(null);
+      setPreviewMove(null);
       setError(toUserMessage(e));
     } finally {
       if (seq === reqSeq.current) setLoading(false);
@@ -419,6 +515,8 @@ export function useCheckers() {
     setError(null);
     setSelected(null);
     setActiveMoveId(null);
+    setOptimisticState(null);
+    setPreviewMove(null);
     try {
       const created = await createGame();
       if (seq !== reqSeq.current) return;
@@ -443,6 +541,8 @@ export function useCheckers() {
       const seq = ++reqSeq.current;
       setLoading(true);
       setError(null);
+      setOptimisticState(null);
+      setPreviewMove(null);
       try {
         await apiCall(gameId);
         if (seq !== reqSeq.current) return;
@@ -457,6 +557,8 @@ export function useCheckers() {
           setSelected(null);
           setActiveMoveId(null);
         }
+        setOptimisticState(null);
+        setPreviewMove(null);
         setError(toUserMessage(e));
         setLoading(false);
       }
@@ -510,22 +612,47 @@ export function useCheckers() {
           : null;
 
         if (serverChosen || localChosen) {
+          const movePath = serverChosen
+            ? backendAllowedMoveToPath(serverChosen)
+            : [{ ...selected }, { ...at }];
+          const capturedPositions = serverChosen
+            ? backendAllowedMoveToCapturedPositions(serverChosen)
+            : localChosen && localChosen.type === "capture"
+              ? [{ ...localChosen.captured }]
+              : EMPTY_COORDS;
+          const optimisticBoard = applyOptimisticMove(b, selected, at, capturedPositions);
+          const previewId = ++previewSeq.current;
           const seq = ++reqSeq.current;
           setLoading(true);
+          setOptimisticState({
+            board: optimisticBoard,
+            turn: otherPlayer(turn),
+            capturedByWhite:
+              capturedByWhite + capturedPositions.length,
+            capturedByBlack,
+          });
+          setPreviewMove({
+            id: previewId,
+            path: movePath,
+            capturedPositions,
+          });
+          setSelected(null);
+          setActiveMoveId(null);
           try {
+            await sleep(Math.max(0, (movePath.length - 1) * MOVE_ANIMATION_STEP_MS));
             await makeMove(gameId, { row: selected.r, col: selected.c }, { row: at.r, col: at.c });
             if (seq !== reqSeq.current) return;
-            setSelected(null);
-            setActiveMoveId(null);
             await refresh(gameId);
           } catch (e) {
             if (seq !== reqSeq.current) return;
             const nextGame = extractGameFromError(e);
             if (nextGame) {
               setGame(nextGame);
-              setSelected(null);
-              setActiveMoveId(null);
             }
+            setOptimisticState(null);
+            setPreviewMove(null);
+            setSelected(null);
+            setActiveMoveId(null);
             setError(toUserMessage(e));
             setLoading(false);
           }
@@ -559,7 +686,20 @@ export function useCheckers() {
       setSelected({ ...at });
       setActiveMoveId(null);
     },
-    [board, game, gameId, isBoardInteractive, mustCapture, refresh, selected, serverAllowedMoves, turn, winner],
+    [
+      board,
+      capturedByBlack,
+      capturedByWhite,
+      game,
+      gameId,
+      isBoardInteractive,
+      mustCapture,
+      refresh,
+      selected,
+      serverAllowedMoves,
+      turn,
+      winner,
+    ],
   );
 
   const setActiveMove = useCallback((id: number | null) => {
@@ -584,6 +724,12 @@ export function useCheckers() {
       moves,
       activeMoveId,
       activeMovePath,
+      previewMoveId: previewMove?.id ?? null,
+      previewMovePath: previewMove?.path ?? null,
+      previewMoveCapturedPositions: previewMove?.capturedPositions ?? EMPTY_COORDS,
+      latestMoveId: latestMove?.id ?? null,
+      latestMovePath,
+      latestMoveCapturedPositions,
       clock: DISABLED_CLOCK,
     }),
     [
@@ -597,6 +743,10 @@ export function useCheckers() {
       error,
       gameId,
       history.length,
+      latestMove,
+      latestMoveCapturedPositions,
+      latestMovePath,
+      previewMove,
       isBoardInteractive,
       loading,
       moves,

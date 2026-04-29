@@ -60,6 +60,12 @@ function App() {
               availableMoves={snapshot.availableMoves}
               capturingPieces={snapshot.capturingPieces}
               activeMovePath={snapshot.activeMovePath}
+              previewMoveId={snapshot.previewMoveId}
+              previewMovePath={snapshot.previewMovePath}
+              previewMoveCapturedPositions={snapshot.previewMoveCapturedPositions}
+              latestMoveId={snapshot.latestMoveId}
+              latestMovePath={snapshot.latestMovePath}
+              latestMoveCapturedPositions={snapshot.latestMoveCapturedPositions}
               onCellClick={onCellClick}
             />
             <MoveHistory moves={snapshot.moves} activeId={snapshot.activeMoveId} onSelect={setActiveMove} />

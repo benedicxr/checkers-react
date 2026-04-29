@@ -5,12 +5,16 @@ export type ApiPos = Readonly<{
   col: number;
 }>;
 
+export type ApiPath = ReadonlyArray<ApiPos>;
+
 export type ApiAllowedMove = Readonly<{
   fromPos: ApiPos;
   toPos: ApiPos;
   isCapture?: boolean;
   isJump?: boolean;
   capturedPos?: ApiPos | null;
+  path?: ApiPath;
+  capturedPositions?: ReadonlyArray<ApiPos>;
 }>;
 
 export type BackendPiece = Readonly<{
@@ -42,6 +46,8 @@ export type ApiMoveHistoryItem = Readonly<{
   toPos: ApiPos;
   isJump: boolean;
   capturedPos: ApiPos | null;
+  path?: ApiPath;
+  capturedPositions?: ReadonlyArray<ApiPos>;
   isPromoted: boolean;
   createdAt: string;
 }>;
