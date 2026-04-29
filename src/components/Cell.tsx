@@ -9,6 +9,7 @@ export const Cell = memo(function Cell({
   historyMark,
   historyStart,
   historyEnd,
+  interactive,
   onClick,
 }: {
   row: number;
@@ -17,12 +18,16 @@ export const Cell = memo(function Cell({
   historyMark: boolean;
   historyStart: boolean;
   historyEnd: boolean;
+  interactive: boolean;
   onClick: (row: number, col: number) => void;
 }) {
   const isDark =
     (row + col) % GAME_RULES.DARK_CELL_MOD === GAME_RULES.DARK_CELL_REMAINDER;
 
-  const handleClick = useCallback(() => onClick(row, col), [col, onClick, row]);
+  const handleClick = useCallback(() => {
+    if (!interactive) return;
+    onClick(row, col);
+  }, [col, interactive, onClick, row]);
 
   const isAvailable = Boolean(availableMove);
   const isCapture = availableMove?.type === "jump";

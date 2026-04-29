@@ -10,6 +10,7 @@ function cellKey(r: number, c: number): string {
 
 export const Board = memo(function Board({
   board,
+  interactive,
   selected,
   availableMoves,
   capturingPieces,
@@ -17,6 +18,7 @@ export const Board = memo(function Board({
   onCellClick,
 }: {
   board: BoardSnapshot;
+  interactive: boolean;
   selected: Coords | null;
   availableMoves: readonly Move[];
   capturingPieces: readonly Coords[];
@@ -74,6 +76,7 @@ export const Board = memo(function Board({
             historyMark={history.historySet.has(cellKey(row, col))}
             historyStart={history.historyStart === cellKey(row, col)}
             historyEnd={history.historyEnd === cellKey(row, col)}
+            interactive={interactive}
             onClick={onCellClick}
           />
         )),
@@ -95,7 +98,7 @@ export const Board = memo(function Board({
                 left: `calc(var(--cell-size) * ${c} + var(--checker-offset))`,
                 zIndex: isSelected ? 3 : 1,
               }}
-              onClick={() => onCellClick(r, c)}
+              onClick={interactive ? () => onCellClick(r, c) : undefined}
             >
               <Piece checker={checker} selected={isSelected} capturable={isCapturable} />
             </div>

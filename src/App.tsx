@@ -55,6 +55,7 @@ function App() {
           <>
             <Board
               board={snapshot.board}
+              interactive={snapshot.isBoardInteractive}
               selected={snapshot.selected}
               availableMoves={snapshot.availableMoves}
               capturingPieces={snapshot.capturingPieces}

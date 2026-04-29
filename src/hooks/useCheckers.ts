@@ -16,6 +16,7 @@ export type CheckersSnapshot = Readonly<{
   gameId: ApiGameId | null;
   loading: boolean;
   error: string | null;
+  isBoardInteractive: boolean;
 
   board: BoardSnapshot;
   turn: Player;
@@ -208,6 +209,13 @@ export function useCheckers() {
     if (!game) return null;
     return mapPlayerSide(game.winner) ?? null;
   }, [game]);
+
+  const isBoardInteractive = useMemo(() => {
+    if (!gameId || !game) return false;
+    if (loading) return false;
+    if (winner !== null) return false;
+    return turn === GAME_CONFIG.WHITE_PLAYER;
+  }, [game, gameId, loading, turn, winner]);
 
   const serverAllowedMoves = useMemo((): readonly ApiAllowedMove[] | null => {
     const ms = game?.allowedMoves;
@@ -477,7 +485,7 @@ export function useCheckers() {
   const onCellClick = useCallback(
     async (row: number, col: number) => {
       if (!gameId || !game) return;
-      if (loading) return;
+      if (!isBoardInteractive) return;
       if (winner !== null) return;
 
       setError(null);
@@ -551,7 +559,7 @@ export function useCheckers() {
       setSelected({ ...at });
       setActiveMoveId(null);
     },
-    [board, game, gameId, loading, mustCapture, refresh, selected, serverAllowedMoves, turn, winner],
+    [board, game, gameId, isBoardInteractive, mustCapture, refresh, selected, serverAllowedMoves, turn, winner],
   );
 
   const setActiveMove = useCallback((id: number | null) => {
@@ -563,6 +571,7 @@ export function useCheckers() {
       gameId,
       loading,
       error,
+      isBoardInteractive,
       board,
       turn,
       winner,
@@ -588,6 +597,7 @@ export function useCheckers() {
       error,
       gameId,
       history.length,
+      isBoardInteractive,
       loading,
       moves,
       selected,
