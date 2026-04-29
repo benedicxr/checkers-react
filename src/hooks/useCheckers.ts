@@ -4,8 +4,8 @@ import type { Board, BoardSnapshot, CheckerSnapshot, Coords, Move, Player, Timer
 import { cloneBoard, countPieces, getPiece, maybePromote, movePiece, removePiece, setPiece } from "../logic/boardUtils";
 import { getCapturesForPiece, getCapturingPieces, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
 import type { CoreMove } from "../types";
-import type { ApiAllowedMove, ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
-import { createGame, getGame, getMoves, makeMove, restartGame, undoMove } from "../api/games";
+import type { ApiAllowedMove, ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, ApiTaskStatus, BackendBoard, BackendPiece } from "../api/types";
+import { createGame, getGame, getMoves, getTask, makeMove, restartGame, undoMove } from "../api/games";
 import { ApiClientError } from "../api/client";
 
 type RenderMove = Readonly<{ id: number; text: string }>;
@@ -28,6 +28,7 @@ export type CheckersSnapshot = Readonly<{
   mode: ApiGameMode;
   loading: boolean;
   error: string | null;
+  aiTaskStatus: ApiTaskStatus | null;
   isBoardInteractive: boolean;
 
   board: BoardSnapshot;
@@ -270,10 +271,17 @@ export function useCheckers() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [aiTaskStatus, setAiTaskStatus] = useState<ApiTaskStatus | null>(null);
 
   const reqSeq = useRef(0);
   const didHydrateRef = useRef(false);
   const previewSeq = useRef(0);
+
+  const syncGameState = useCallback((nextGame: ApiGame, nextMoves?: ApiMoveHistoryItem[]) => {
+    setMode(normalizeGameMode(nextGame.mode));
+    setGame(nextGame);
+    if (nextMoves) setHistory(nextMoves);
+  }, []);
 
   const board = useMemo((): BoardSnapshot => {
     if (optimisticState) return optimisticState.board;
@@ -497,11 +505,10 @@ export function useCheckers() {
 
       writeStoredGameId(id);
       setGameId(id);
-      setMode(normalizeGameMode(res.game.mode));
+      setAiTaskStatus(null);
       setOptimisticState(null);
       setPreviewMove(null);
-      setGame(res.game);
-      setHistory(res.moves);
+      syncGameState(res.game, res.moves);
     } catch (e) {
       if (seq !== reqSeq.current) return;
       if (e instanceof ApiClientError && e.status === 404) {
@@ -511,13 +518,14 @@ export function useCheckers() {
         setGame(null);
         setHistory([]);
       }
+      setAiTaskStatus(null);
       setOptimisticState(null);
       setPreviewMove(null);
       setError(toUserMessage(e));
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [fetchGameAndMoves]);
+  }, [fetchGameAndMoves, syncGameState]);
 
   const reset = useCallback(async () => {
     const seq = ++reqSeq.current;
@@ -525,6 +533,7 @@ export function useCheckers() {
     setError(null);
     setSelected(null);
     setActiveMoveId(null);
+    setAiTaskStatus(null);
     setOptimisticState(null);
     setPreviewMove(null);
     try {
@@ -535,16 +544,15 @@ export function useCheckers() {
       const res = await fetchGameAndMoves(created.id);
       if (!res) return;
       setGameId(created.id);
-      setMode(normalizeGameMode(res.game.mode));
-      setGame(res.game);
-      setHistory(res.moves);
+      setAiTaskStatus(null);
+      syncGameState(res.game, res.moves);
     } catch (e) {
       if (seq !== reqSeq.current) return;
       setError(toUserMessage(e));
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [fetchGameAndMoves, mode]);
+  }, [fetchGameAndMoves, mode, syncGameState]);
 
   const runMutation = useCallback(
     async (apiCall: (id: ApiGameId) => Promise<unknown>) => {
@@ -552,6 +560,7 @@ export function useCheckers() {
       const seq = ++reqSeq.current;
       setLoading(true);
       setError(null);
+      setAiTaskStatus(null);
       setOptimisticState(null);
       setPreviewMove(null);
       try {
@@ -564,7 +573,7 @@ export function useCheckers() {
         if (seq !== reqSeq.current) return;
         const nextGame = extractGameFromError(e);
         if (nextGame) {
-          setGame(nextGame);
+          syncGameState(nextGame);
           setSelected(null);
           setActiveMoveId(null);
         }
@@ -574,7 +583,7 @@ export function useCheckers() {
         setLoading(false);
       }
     },
-    [gameId, refresh],
+    [gameId, refresh, syncGameState],
   );
 
   const undo = useCallback(async () => {
@@ -594,6 +603,53 @@ export function useCheckers() {
     setActiveMoveId(null);
     void refresh(gameId);
   }, [gameId, refresh]);
+
+  const pollAiTask = useCallback(
+    async (taskId: string, currentGameId: ApiGameId, seq: number) => {
+      while (seq === reqSeq.current) {
+        await sleep(1200);
+        if (seq !== reqSeq.current) return;
+
+        const task = await getTask(taskId);
+        if (seq !== reqSeq.current) return;
+
+        setAiTaskStatus(task.status);
+
+        if (task.status === "finished") {
+          if (task.game) {
+            let nextMoves: ApiMoveHistoryItem[] = [];
+            try {
+              nextMoves = await getMoves(currentGameId);
+            } catch (e) {
+              if (!(e instanceof ApiClientError && e.status === 404)) throw e;
+            }
+            if (seq !== reqSeq.current) return;
+            syncGameState(task.game, nextMoves);
+          } else {
+            await refresh(currentGameId);
+            if (seq !== reqSeq.current) return;
+          }
+          setOptimisticState(null);
+          setPreviewMove(null);
+          setSelected(null);
+          setActiveMoveId(null);
+          setAiTaskStatus(null);
+          setLoading(false);
+          return;
+        }
+
+        if (task.status === "failed") {
+          setOptimisticState(null);
+          setPreviewMove(null);
+          setAiTaskStatus(null);
+          setError("AI move failed");
+          setLoading(false);
+          return;
+        }
+      }
+    },
+    [refresh, syncGameState],
+  );
 
   const onCellClick = useCallback(
     async (row: number, col: number) => {
@@ -651,15 +707,43 @@ export function useCheckers() {
           setActiveMoveId(null);
           try {
             await sleep(Math.max(0, (movePath.length - 1) * MOVE_ANIMATION_STEP_MS));
-            await makeMove(gameId, { row: selected.r, col: selected.c }, { row: at.r, col: at.c });
+            const moveResult = await makeMove(gameId, { row: selected.r, col: selected.c }, { row: at.r, col: at.c });
             if (seq !== reqSeq.current) return;
-            await refresh(gameId);
+            if (moveResult.status === 200) {
+              let nextMoves: ApiMoveHistoryItem[] = [];
+              try {
+                nextMoves = await getMoves(gameId);
+              } catch (e) {
+                if (!(e instanceof ApiClientError && e.status === 404)) throw e;
+              }
+              if (seq !== reqSeq.current) return;
+              setOptimisticState(null);
+              setPreviewMove(null);
+              syncGameState(moveResult.game, nextMoves);
+              setLoading(false);
+              return;
+            }
+
+            setOptimisticState(null);
+            setPreviewMove(null);
+            setAiTaskStatus(moveResult.taskStatus as ApiTaskStatus);
+            syncGameState(moveResult.game);
+            let nextMoves: ApiMoveHistoryItem[] = [];
+            try {
+              nextMoves = await getMoves(gameId);
+            } catch (e) {
+              if (!(e instanceof ApiClientError && e.status === 404)) throw e;
+            }
+            if (seq !== reqSeq.current) return;
+            setHistory(nextMoves);
+            await pollAiTask(moveResult.taskId, gameId, seq);
           } catch (e) {
             if (seq !== reqSeq.current) return;
             const nextGame = extractGameFromError(e);
             if (nextGame) {
-              setGame(nextGame);
+              syncGameState(nextGame);
             }
+            setAiTaskStatus(null);
             setOptimisticState(null);
             setPreviewMove(null);
             setSelected(null);
@@ -705,11 +789,12 @@ export function useCheckers() {
       gameId,
       isBoardInteractive,
       mustCapture,
-      refresh,
       selected,
       serverAllowedMoves,
+      syncGameState,
       turn,
       winner,
+      pollAiTask,
     ],
   );
 
@@ -723,6 +808,7 @@ export function useCheckers() {
       mode,
       loading,
       error,
+      aiTaskStatus,
       isBoardInteractive,
       board,
       turn,
@@ -760,6 +846,7 @@ export function useCheckers() {
       latestMovePath,
       mode,
       previewMove,
+      aiTaskStatus,
       isBoardInteractive,
       loading,
       moves,

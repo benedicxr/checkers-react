@@ -1,5 +1,5 @@
-import { apiRequest } from "./client";
-import type { ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, ApiPos } from "./types";
+import { apiRequest, apiRequestWithMeta } from "./client";
+import type { ApiAsyncMoveAccepted, ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, ApiPos, ApiTaskResult } from "./types";
 
 function normalizeMovesResponse(raw: unknown): ApiMoveHistoryItem[] {
   if (Array.isArray(raw)) return raw as ApiMoveHistoryItem[];
@@ -22,11 +22,25 @@ export async function getMoves(gameId: ApiGameId): Promise<ApiMoveHistoryItem[]>
   return normalizeMovesResponse(raw);
 }
 
-export async function makeMove(gameId: ApiGameId, from: ApiPos, to: ApiPos): Promise<unknown> {
-  return apiRequest(`/games/${gameId}/moves/`, {
+export async function makeMove(gameId: ApiGameId, from: ApiPos, to: ApiPos): Promise<
+  | { status: 200; game: ApiGame }
+  | { status: 202; taskId: string; taskStatus: string; game: ApiGame }
+> {
+  const res = await apiRequestWithMeta<ApiGame | ApiAsyncMoveAccepted>(`/games/${gameId}/moves/`, {
     method: "POST",
     json: { from, to },
   });
+
+  if (res.status === 202) {
+    const payload = res.payload as ApiAsyncMoveAccepted;
+    return { status: 202, taskId: payload.taskId, taskStatus: payload.status, game: payload.game };
+  }
+
+  return { status: 200, game: res.payload as ApiGame };
+}
+
+export async function getTask(taskId: string): Promise<ApiTaskResult> {
+  return apiRequest<ApiTaskResult>(`/tasks/${taskId}/`, { method: "GET" });
 }
 
 export async function undoMove(gameId: ApiGameId): Promise<unknown> {

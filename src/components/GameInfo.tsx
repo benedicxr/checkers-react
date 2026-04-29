@@ -17,12 +17,14 @@ export const GameInfo = memo(function GameInfo({
   capturedByWhite,
   capturedByBlack,
   winner,
+  aiThinking = false,
 }: {
   mode: ApiGameMode;
   turn: Player;
   capturedByWhite: number;
   capturedByBlack: number;
   winner: Player | null;
+  aiThinking?: boolean;
 }) {
   if (winner !== null) {
     return (
@@ -41,6 +43,7 @@ export const GameInfo = memo(function GameInfo({
     <div className="turn">
       {modeLabel(mode)}{" "}
       Turn: {playerLabel(turn)}{" "}
+      {aiThinking ? <span style={{ color: "var(--text)", fontWeight: 700 }}>AI is thinking... </span> : null}
       <span style={{ color: "var(--muted)", fontWeight: 600 }}>
         {" "}
         Captured: White {capturedByWhite}, Black {capturedByBlack}

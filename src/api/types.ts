@@ -1,5 +1,6 @@
 export type ApiGameId = string | number;
 export type ApiGameMode = "vs_ai" | "pvp";
+export type ApiTaskStatus = "queued" | "started" | "finished" | "failed";
 
 export type ApiPos = Readonly<{
   row: number;
@@ -52,4 +53,17 @@ export type ApiMoveHistoryItem = Readonly<{
   capturedPositions?: ReadonlyArray<ApiPos>;
   isPromoted: boolean;
   createdAt: string;
+}>;
+
+export type ApiAsyncMoveAccepted = Readonly<{
+  taskId: string;
+  status: ApiTaskStatus;
+  game: ApiGame;
+}>;
+
+export type ApiTaskResult = Readonly<{
+  taskId: string;
+  status: ApiTaskStatus;
+  gameId?: ApiGameId;
+  game?: ApiGame;
 }>;

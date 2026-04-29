@@ -20,6 +20,7 @@ function App() {
                 capturedByWhite={snapshot.capturedByWhite}
                 capturedByBlack={snapshot.capturedByBlack}
                 winner={snapshot.winner}
+                aiThinking={snapshot.mode === "vs_ai" && snapshot.aiTaskStatus !== null}
               />
             ) : (
               <div className="turn">Click "New game" to create a game.</div>

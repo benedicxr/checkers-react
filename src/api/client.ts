@@ -56,7 +56,10 @@ async function readJsonSafely(res: Response): Promise<unknown> {
   }
 }
 
-export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
+export async function apiRequestWithMeta<T>(
+  path: string,
+  init: ApiRequestInit = {},
+): Promise<{ status: number; payload: T }> {
   const url = joinUrl(API_BASE_URL, path);
   const headers = new Headers(init.headers);
   headers.set("accept", "application/json");
@@ -82,8 +85,11 @@ export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Pr
     throw new ApiClientError(msg, { status: res.status, payload });
   }
 
-  // For 204 etc
-  if (res.status === 204) return undefined as T;
-  return payload as T;
+  if (res.status === 204) return { status: res.status, payload: undefined as T };
+  return { status: res.status, payload: payload as T };
 }
 
+export async function apiRequest<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
+  const res = await apiRequestWithMeta<T>(path, init);
+  return res.payload;
+}
