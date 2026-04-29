@@ -4,7 +4,7 @@ import type { Board, BoardSnapshot, CheckerSnapshot, Coords, Move, Player, Timer
 import { cloneBoard, countPieces, getPiece, maybePromote, movePiece, removePiece, setPiece } from "../logic/boardUtils";
 import { getCapturesForPiece, getCapturingPieces, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
 import type { CoreMove } from "../types";
-import type { ApiAllowedMove, ApiGame, ApiGameId, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
+import type { ApiAllowedMove, ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, BackendBoard, BackendPiece } from "../api/types";
 import { createGame, getGame, getMoves, makeMove, restartGame, undoMove } from "../api/games";
 import { ApiClientError } from "../api/client";
 
@@ -25,6 +25,7 @@ type OptimisticState = Readonly<{
 
 export type CheckersSnapshot = Readonly<{
   gameId: ApiGameId | null;
+  mode: ApiGameMode;
   loading: boolean;
   error: string | null;
   isBoardInteractive: boolean;
@@ -64,6 +65,7 @@ const DISABLED_CLOCK: TimerClockSnapshot = Object.freeze({
 });
 
 const ACTIVE_GAME_ID_STORAGE_KEY = "checkers.activeGameId.v1";
+const DEFAULT_GAME_MODE: ApiGameMode = "vs_ai";
 
 function normalizeGameId(raw: string | null): ApiGameId | null {
   if (!raw) return null;
@@ -121,6 +123,10 @@ function mapPiece(piece: BackendPiece | null): CheckerSnapshot | null {
 
 function mapBoard(board: BackendBoard): BoardSnapshot {
   return board.map((row) => row.map(mapPiece));
+}
+
+function normalizeGameMode(mode: unknown): ApiGameMode {
+  return mode === "pvp" ? "pvp" : "vs_ai";
 }
 
 function mapPlayerSide(x: unknown): Player | null {
@@ -252,6 +258,7 @@ function extractGameFromError(e: unknown): ApiGame | null {
 }
 
 export function useCheckers() {
+  const [mode, setMode] = useState<ApiGameMode>(DEFAULT_GAME_MODE);
   const [gameId, setGameId] = useState<ApiGameId | null>(() => readInitialGameId());
   const [game, setGame] = useState<ApiGame | null>(null);
   const [history, setHistory] = useState<ApiMoveHistoryItem[]>([]);
@@ -289,8 +296,9 @@ export function useCheckers() {
     if (optimisticState) return false;
     if (loading) return false;
     if (winner !== null) return false;
+    if (mode === "pvp") return true;
     return turn === GAME_CONFIG.WHITE_PLAYER;
-  }, [game, gameId, loading, optimisticState, turn, winner]);
+  }, [game, gameId, loading, mode, optimisticState, turn, winner]);
 
   const serverAllowedMoves = useMemo((): readonly ApiAllowedMove[] | null => {
     if (optimisticState) return null;
@@ -489,6 +497,7 @@ export function useCheckers() {
 
       writeStoredGameId(id);
       setGameId(id);
+      setMode(normalizeGameMode(res.game.mode));
       setOptimisticState(null);
       setPreviewMove(null);
       setGame(res.game);
@@ -498,6 +507,7 @@ export function useCheckers() {
       if (e instanceof ApiClientError && e.status === 404) {
         writeStoredGameId(null);
         setGameId(null);
+        setMode(DEFAULT_GAME_MODE);
         setGame(null);
         setHistory([]);
       }
@@ -518,13 +528,14 @@ export function useCheckers() {
     setOptimisticState(null);
     setPreviewMove(null);
     try {
-      const created = await createGame();
+      const created = await createGame(mode);
       if (seq !== reqSeq.current) return;
       writeStoredGameId(created.id);
 
       const res = await fetchGameAndMoves(created.id);
       if (!res) return;
       setGameId(created.id);
+      setMode(normalizeGameMode(res.game.mode));
       setGame(res.game);
       setHistory(res.moves);
     } catch (e) {
@@ -533,7 +544,7 @@ export function useCheckers() {
     } finally {
       if (seq === reqSeq.current) setLoading(false);
     }
-  }, [fetchGameAndMoves]);
+  }, [fetchGameAndMoves, mode]);
 
   const runMutation = useCallback(
     async (apiCall: (id: ApiGameId) => Promise<unknown>) => {
@@ -709,6 +720,7 @@ export function useCheckers() {
   const snapshot: CheckersSnapshot = useMemo(
     () => ({
       gameId,
+      mode,
       loading,
       error,
       isBoardInteractive,
@@ -746,6 +758,7 @@ export function useCheckers() {
       latestMove,
       latestMoveCapturedPositions,
       latestMovePath,
+      mode,
       previewMove,
       isBoardInteractive,
       loading,
@@ -756,5 +769,5 @@ export function useCheckers() {
     ],
   );
 
-  return { snapshot, onCellClick, reset, undo, restart, setActiveMove, refresh };
+  return { snapshot, onCellClick, reset, undo, restart, setActiveMove, refresh, setMode };
 }

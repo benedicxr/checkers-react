@@ -1,4 +1,5 @@
 export type ApiGameId = string | number;
+export type ApiGameMode = "vs_ai" | "pvp";
 
 export type ApiPos = Readonly<{
   row: number;
@@ -27,6 +28,7 @@ export type BackendBoard = ReadonlyArray<ReadonlyArray<BackendPiece | null>>;
 
 export type ApiGame = Readonly<{
   id: ApiGameId;
+  mode?: ApiGameMode;
   board: BackendBoard;
   currentTurn: "white" | "black";
   status: string;

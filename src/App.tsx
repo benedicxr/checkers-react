@@ -5,7 +5,7 @@ import { TimerView } from "./components/TimerView";
 import { useCheckers } from "./hooks/useCheckers";
 
 function App() {
-  const { snapshot, onCellClick, reset, undo, restart, setActiveMove } = useCheckers();
+  const { snapshot, onCellClick, reset, undo, restart, setActiveMove, setMode } = useCheckers();
 
   return (
     <div className="app">
@@ -15,6 +15,7 @@ function App() {
           <div id="turn-indicator">
             {snapshot.gameId ? (
               <GameInfo
+                mode={snapshot.mode}
                 turn={snapshot.turn}
                 capturedByWhite={snapshot.capturedByWhite}
                 capturedByBlack={snapshot.capturedByBlack}
@@ -33,6 +34,24 @@ function App() {
         </div>
 
         <div className="actions">
+          <div className="mode-switch" role="group" aria-label="Game mode">
+            <button
+              className={["mode-option", snapshot.mode === "vs_ai" ? "active" : null].filter(Boolean).join(" ")}
+              type="button"
+              disabled={snapshot.loading}
+              onClick={() => setMode("vs_ai")}
+            >
+              Play vs AI
+            </button>
+            <button
+              className={["mode-option", snapshot.mode === "pvp" ? "active" : null].filter(Boolean).join(" ")}
+              type="button"
+              disabled={snapshot.loading}
+              onClick={() => setMode("pvp")}
+            >
+              Two players
+            </button>
+          </div>
           <button
             className="btn"
             type="button"

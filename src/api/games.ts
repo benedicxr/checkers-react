@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { ApiGame, ApiGameId, ApiMoveHistoryItem, ApiPos } from "./types";
+import type { ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, ApiPos } from "./types";
 
 function normalizeMovesResponse(raw: unknown): ApiMoveHistoryItem[] {
   if (Array.isArray(raw)) return raw as ApiMoveHistoryItem[];
@@ -9,8 +9,8 @@ function normalizeMovesResponse(raw: unknown): ApiMoveHistoryItem[] {
   return [];
 }
 
-export async function createGame(): Promise<ApiGame> {
-  return apiRequest<ApiGame>("/games/", { method: "POST" });
+export async function createGame(mode: ApiGameMode): Promise<ApiGame> {
+  return apiRequest<ApiGame>("/games/", { method: "POST", json: { mode } });
 }
 
 export async function getGame(gameId: ApiGameId): Promise<ApiGame> {
@@ -36,4 +36,3 @@ export async function undoMove(gameId: ApiGameId): Promise<unknown> {
 export async function restartGame(gameId: ApiGameId): Promise<unknown> {
   return apiRequest(`/games/${gameId}/restart/`, { method: "POST" });
 }
-
