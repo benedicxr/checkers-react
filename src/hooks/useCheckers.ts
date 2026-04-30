@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GAME_CONFIG, GAME_RULES, MOVE_ANIMATION_STEP_MS } from "../constants";
 import type { Board, BoardSnapshot, CheckerSnapshot, Coords, Move, Player, TimerClockSnapshot } from "../types";
 import { cloneBoard, countPieces, getPiece, maybePromote, movePiece, removePiece, setPiece } from "../logic/boardUtils";
-import { getCapturesForPiece, getCapturingPieces, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
+import { getCapturesForPiece, getCapturingPieces, getQuietMovesForPiece, getValidMovesForPiece, playerHasCapture } from "../logic/gameRules";
 import type { CoreMove } from "../types";
 import type { ApiAllowedMove, ApiGame, ApiGameId, ApiGameMode, ApiMoveHistoryItem, ApiTaskStatus, BackendBoard, BackendPiece } from "../api/types";
 import { createGame, getGame, getMoves, getTask, makeMove, restartGame, undoMove } from "../api/games";
@@ -19,6 +19,13 @@ type OptimisticState = Readonly<{
   turn: Player;
   capturedByWhite: number;
   capturedByBlack: number;
+}>;
+
+type LocalResolvedMove = Readonly<{
+  from: Coords;
+  to: Coords;
+  path: readonly Coords[];
+  capturedPositions: readonly Coords[];
 }>;
 
 
@@ -155,11 +162,6 @@ function backendAllowedMoveToUi(m: ApiAllowedMove): Move | null {
   return { r: m.toPos.row, c: m.toPos.col, type: "jump" as const, target: { r: cap.row, c: cap.col } };
 }
 
-function moveKey(from: Coords, to: Coords, captured: Coords | null): string {
-  if (!captured) return `${from.r},${from.c}->${to.r},${to.c}`;
-  return `${from.r},${from.c}->${to.r},${to.c}|x:${captured.r},${captured.c}`;
-}
-
 function sameCoordsApi(a: Coords, b: { row: number; col: number }): boolean {
   return a.r === b.row && a.c === b.col;
 }
@@ -220,6 +222,32 @@ function backendAllowedMoveToCapturedPositions(m: ApiAllowedMove): Coords[] {
   return [{ r: m.capturedPos.row, c: m.capturedPos.col }];
 }
 
+function resolvedMoveKey(from: Coords, to: Coords, path: readonly Coords[], capturedPositions: readonly Coords[]): string {
+  const pathKey = path.map((p) => `${p.r},${p.c}`).join(">");
+  const capturesKey = capturedPositions.map((p) => `${p.r},${p.c}`).join(";");
+  return `${from.r},${from.c}->${to.r},${to.c}|path:${pathKey}|caps:${capturesKey}`;
+}
+
+function getForcedContinuationPiece(
+  board: Board,
+  turn: Player,
+  winner: Player | null,
+  history: readonly ApiMoveHistoryItem[],
+): Coords | null {
+  if (winner !== null) return null;
+  if (history.length === 0) return null;
+
+  const latestMove = history[history.length - 1]!;
+  if (!latestMove.isJump) return null;
+  if (mapPlayerSide(latestMove.playerSide) !== turn) return null;
+
+  const at = { r: latestMove.toPos.row, c: latestMove.toPos.col };
+  const piece = getPiece(board, at.r, at.c);
+  if (!piece || piece.color !== turn) return null;
+  if (getCapturesForPiece(board, turn, at).length === 0) return null;
+  return at;
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -241,6 +269,64 @@ function applyOptimisticMove(
   const promoted = maybePromote(movedRes.moved, to.r);
   next = setPiece(next, to, promoted);
   return next;
+}
+
+function getLocalResolvedMovesForPiece(
+  board: Board,
+  turn: Player,
+  from: Coords,
+  { capturesOnly = false }: { capturesOnly?: boolean } = {},
+): LocalResolvedMove[] {
+  const piece = getPiece(board, from.r, from.c);
+  if (!piece || piece.color !== turn) return [];
+
+  const captures = resolveLocalCaptureSequences(board, turn, from, [from], []);
+  if (capturesOnly) return captures;
+
+  return [
+    ...captures,
+    ...getQuietMovesForPiece(board, turn, from).map((m) => ({
+      from: { ...m.from },
+      to: { ...m.to },
+      path: [{ ...m.from }, { ...m.to }],
+      capturedPositions: [],
+    })),
+  ];
+}
+
+function resolveLocalCaptureSequences(
+  board: Board,
+  turn: Player,
+  from: Coords,
+  path: readonly Coords[],
+  capturedPositions: readonly Coords[],
+): LocalResolvedMove[] {
+  const captures = getCapturesForPiece(board, turn, from);
+  if (captures.length === 0) {
+    if (capturedPositions.length === 0) return [];
+    return [{
+      from: { ...path[0]! },
+      to: { ...from },
+      path: path.map((p) => ({ ...p })),
+      capturedPositions: capturedPositions.map((p) => ({ ...p })),
+    }];
+  }
+
+  const out: LocalResolvedMove[] = [];
+  for (const capture of captures) {
+    if (capture.type !== "capture") continue;
+    const nextBoard = applyOptimisticMove(board, capture.from, capture.to, [capture.captured]) as Board;
+    out.push(
+      ...resolveLocalCaptureSequences(
+        nextBoard,
+        turn,
+        capture.to,
+        [...path, capture.to],
+        [...capturedPositions, capture.captured],
+      ),
+    );
+  }
+  return out;
 }
 
 function toUserMessage(e: unknown): string {
@@ -314,11 +400,17 @@ export function useCheckers() {
     return Array.isArray(ms) ? ms : null;
   }, [game?.allowedMoves, optimisticState]);
 
+  const forcedContinuationPiece = useMemo(
+    () => getForcedContinuationPiece(board as Board, turn, winner, history),
+    [board, history, turn, winner],
+  );
+
   const localMustCapture = useMemo(() => {
     if (!game) return false;
     if (winner !== null) return false;
+    if (forcedContinuationPiece) return true;
     return playerHasCapture(board as Board, turn);
-  }, [board, game, turn, winner]);
+  }, [board, forcedContinuationPiece, game, turn, winner]);
 
   const serverMustCapture = useMemo((): boolean | null => {
     if (!game) return null;
@@ -333,6 +425,7 @@ export function useCheckers() {
     if (!game) return EMPTY_MOVES;
     if (winner !== null) return EMPTY_MOVES;
     if (!selected) return EMPTY_MOVES;
+    if (forcedContinuationPiece && !sameCoords(selected, forcedContinuationPiece)) return EMPTY_MOVES;
 
     if (serverAllowedMoves) {
       const ui: Move[] = [];
@@ -344,14 +437,17 @@ export function useCheckers() {
       return ui;
     }
 
-    const core = getValidMovesForPiece(board as Board, turn, selected, { capturesOnly: mustCapture });
+    const core = getValidMovesForPiece(board as Board, turn, selected, {
+      capturesOnly: forcedContinuationPiece !== null || mustCapture,
+    });
     return coreMovesToUi(core);
-  }, [board, game, mustCapture, selected, serverAllowedMoves, turn, winner]);
+  }, [board, forcedContinuationPiece, game, mustCapture, selected, serverAllowedMoves, turn, winner]);
 
   const capturingPieces = useMemo((): readonly Coords[] => {
     if (!game) return EMPTY_COORDS;
     if (winner !== null) return EMPTY_COORDS;
     if (!mustCapture) return EMPTY_COORDS;
+    if (forcedContinuationPiece) return [forcedContinuationPiece];
 
     if (serverAllowedMoves) {
       const captureMoves = serverAllowedMoves.filter(isBackendCaptureMove);
@@ -370,7 +466,7 @@ export function useCheckers() {
     }
 
     return getCapturingPieces(board as Board, turn);
-  }, [board, game, mustCapture, serverAllowedMoves, turn, winner]);
+  }, [board, forcedContinuationPiece, game, mustCapture, serverAllowedMoves, turn, winner]);
 
   const lastRulesDriftRef = useRef<string | null>(null);
   useEffect(() => {
@@ -383,22 +479,27 @@ export function useCheckers() {
     for (const m of serverAllowedMoves) {
       const from: Coords = { r: m.fromPos.row, c: m.fromPos.col };
       const to: Coords = { r: m.toPos.row, c: m.toPos.col };
-      const captured = isBackendCaptureMove(m) && m.capturedPos
-        ? { r: m.capturedPos.row, c: m.capturedPos.col }
-        : null;
-      serverSet.add(moveKey(from, to, captured));
+      const path = backendAllowedMoveToPath(m);
+      const capturedPositions = backendAllowedMoveToCapturedPositions(m);
+      serverSet.add(resolvedMoveKey(from, to, path, capturedPositions));
     }
 
     const localSet = new Set<string>();
     const b = board as Board;
-    for (let r = 0; r < GAME_CONFIG.ROWS; r++) {
-      for (let c = 0; c < GAME_CONFIG.COLS; c++) {
-        const p = b[r]![c]!;
-        if (!p || p.color !== turn) continue;
-        const core = getValidMovesForPiece(b, turn, { r, c }, { capturesOnly: localMustCapture });
-        for (const m of core) {
-          if (m.type === "simple") localSet.add(moveKey(m.from, m.to, null));
-          else localSet.add(moveKey(m.from, m.to, m.captured));
+    if (forcedContinuationPiece) {
+      const resolved = getLocalResolvedMovesForPiece(b, turn, forcedContinuationPiece, { capturesOnly: true });
+      for (const m of resolved) {
+        localSet.add(resolvedMoveKey(m.from, m.to, m.path, m.capturedPositions));
+      }
+    } else {
+      for (let r = 0; r < GAME_CONFIG.ROWS; r++) {
+        for (let c = 0; c < GAME_CONFIG.COLS; c++) {
+          const p = b[r]![c]!;
+          if (!p || p.color !== turn) continue;
+          const resolved = getLocalResolvedMovesForPiece(b, turn, { r, c }, { capturesOnly: localMustCapture });
+          for (const m of resolved) {
+            localSet.add(resolvedMoveKey(m.from, m.to, m.path, m.capturedPositions));
+          }
         }
       }
     }
@@ -421,13 +522,14 @@ export function useCheckers() {
       gameId: game.id,
       moveCount: game.moveCount,
       turn,
+      forcedContinuationPiece,
       localMustCapture,
       serverAllowedMoves: Array.from(serverSet),
       localAllowedMoves: Array.from(localSet),
       onlyInServer: onlyInServer.slice(0, 12),
       onlyInLocal: onlyInLocal.slice(0, 12),
     });
-  }, [board, game, localMustCapture, serverAllowedMoves, turn, winner]);
+  }, [board, forcedContinuationPiece, game, localMustCapture, serverAllowedMoves, turn, winner]);
 
   const { capturedByWhite, capturedByBlack } = useMemo(() => {
     if (optimisticState) {
@@ -766,6 +868,10 @@ export function useCheckers() {
         return;
       }
 
+      if (forcedContinuationPiece && !sameCoords(forcedContinuationPiece, at)) {
+        return;
+      }
+
       if (mustCapture) {
         if (serverAllowedMoves) {
           const canCapture = serverAllowedMoves.some(
@@ -788,6 +894,7 @@ export function useCheckers() {
       game,
       gameId,
       isBoardInteractive,
+      forcedContinuationPiece,
       mustCapture,
       selected,
       serverAllowedMoves,
