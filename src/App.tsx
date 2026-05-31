@@ -1,11 +1,11 @@
-import { useCheckers } from "./hooks/useCheckers";
 import { Board } from "./components/Board";
 import { GameInfo } from "./components/GameInfo";
 import { MoveHistory } from "./components/MoveHistory";
 import { TimerView } from "./components/TimerView";
+import { useCheckers } from "./hooks/useCheckers";
 
 function App() {
-  const { snapshot, onCellClick, reset, undo, setActiveMove } = useCheckers();
+  const { snapshot, onCellClick, reset, undo, restart, setActiveMove, setMode } = useCheckers();
 
   return (
     <div className="app">
@@ -13,36 +13,84 @@ function App() {
         <div className="brand">
           <div className="title">Checkers</div>
           <div id="turn-indicator">
-            <GameInfo
-              turn={snapshot.turn}
-              capturedByWhite={snapshot.capturedByWhite}
-              capturedByBlack={snapshot.capturedByBlack}
-              winner={snapshot.winner}
-            />
+            {snapshot.gameId ? (
+              <GameInfo
+                mode={snapshot.mode}
+                turn={snapshot.turn}
+                capturedByWhite={snapshot.capturedByWhite}
+                capturedByBlack={snapshot.capturedByBlack}
+                winner={snapshot.winner}
+                aiThinking={snapshot.mode === "vs_ai" && snapshot.aiTaskStatus !== null}
+              />
+            ) : (
+              <div className="turn">Click "New game" to create a game.</div>
+            )}
             <TimerView clock={snapshot.clock} />
           </div>
+          {snapshot.error ? (
+            <div className="error-banner" role="alert">
+              {snapshot.error}
+            </div>
+          ) : null}
         </div>
 
         <div className="actions">
-          <button className="btn" type="button" disabled={!snapshot.canUndo} onClick={() => undo()}>
+          <div className="mode-switch" role="group" aria-label="Game mode">
+            <button
+              className={["mode-option", snapshot.mode === "vs_ai" ? "active" : null].filter(Boolean).join(" ")}
+              type="button"
+              disabled={snapshot.loading}
+              onClick={() => setMode("vs_ai")}
+            >
+              Play vs AI
+            </button>
+            <button
+              className={["mode-option", snapshot.mode === "pvp" ? "active" : null].filter(Boolean).join(" ")}
+              type="button"
+              disabled={snapshot.loading}
+              onClick={() => setMode("pvp")}
+            >
+              Two players
+            </button>
+          </div>
+          <button
+            className="btn"
+            type="button"
+            disabled={!snapshot.gameId || snapshot.loading || !snapshot.canUndo}
+            onClick={() => undo()}
+          >
             Undo
           </button>
-          <button className="btn" type="button" onClick={() => reset()}>
+          <button className="btn" type="button" disabled={snapshot.loading} onClick={() => reset()}>
             New game
+          </button>
+          <button className="btn" type="button" disabled={!snapshot.gameId || snapshot.loading} onClick={() => restart()}>
+            Restart
           </button>
         </div>
       </header>
 
       <main className="main">
-        <Board
-          board={snapshot.board}
-          selected={snapshot.selected}
-          availableMoves={snapshot.availableMoves}
-          capturingPieces={snapshot.capturingPieces}
-          activeMovePath={snapshot.activeMovePath}
-          onCellClick={onCellClick}
-        />
-        <MoveHistory moves={snapshot.moves} activeId={snapshot.activeMoveId} onSelect={setActiveMove} />
+        {snapshot.gameId ? (
+          <>
+            <Board
+              board={snapshot.board}
+              interactive={snapshot.isBoardInteractive}
+              selected={snapshot.selected}
+              availableMoves={snapshot.availableMoves}
+              capturingPieces={snapshot.capturingPieces}
+              activeMovePath={snapshot.activeMovePath}
+              previewMoveId={snapshot.previewMoveId}
+              previewMovePath={snapshot.previewMovePath}
+              previewMoveCapturedPositions={snapshot.previewMoveCapturedPositions}
+              latestMoveId={snapshot.latestMoveId}
+              latestMovePath={snapshot.latestMovePath}
+              latestMoveCapturedPositions={snapshot.latestMoveCapturedPositions}
+              onCellClick={onCellClick}
+            />
+            <MoveHistory moves={snapshot.moves} activeId={snapshot.activeMoveId} onSelect={setActiveMove} />
+          </>
+        ) : null}
       </main>
     </div>
   );

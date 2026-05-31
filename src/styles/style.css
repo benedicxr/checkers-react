@@ -27,6 +27,7 @@
 
     --accent: #f2c14e;
     --danger: #b61d25;
+    --danger-rgb: 182 29 37;
     --text: rgba(37, 22, 14, 0.92);
     --muted: rgba(37, 22, 14, 0.66);
 }
@@ -77,6 +78,37 @@ body {
     justify-content: flex-end;
 }
 
+.mode-switch {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid rgba(53, 32, 18, 0.18);
+    background: rgba(255, 255, 255, 0.24);
+    box-shadow: 0 10px 22px rgba(53, 32, 18, 0.10);
+}
+
+.mode-option {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 8px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.mode-option.active {
+    background: rgba(255, 255, 255, 0.62);
+    color: var(--text);
+    box-shadow: 0 4px 12px rgba(53, 32, 18, 0.10);
+}
+
+.mode-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
 .brand {
     display: flex;
     flex-direction: column;
@@ -94,6 +126,18 @@ body {
 .turn {
     font-size: 13px;
     color: var(--muted);
+}
+
+.error-banner {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid rgb(var(--danger-rgb) / 0.34);
+    background: rgb(var(--danger-rgb) / 0.10);
+    color: rgb(var(--danger-rgb) / 0.92);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
 }
 
 .turn.winner {

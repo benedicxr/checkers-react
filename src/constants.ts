@@ -30,6 +30,8 @@ export const GAME_RULES = {
   FLYING_KINGS: true,
 } as const;
 
+export const MOVE_ANIMATION_STEP_MS = 300;
+
 export const CSS_CLASSES = {
   CELL: "cell",
   BLACK_CELL: "black-cell",
